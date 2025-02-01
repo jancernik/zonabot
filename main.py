@@ -1,178 +1,171 @@
+import os
+import json
 import time
 import threading
+import random
+import logging
+from dotenv import load_dotenv
 from selenium.webdriver.common.by import By
 from seleniumbase import Driver
-import telebot
-from telebot import types
-import random
-from dotenv import load_dotenv
-import os
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 
+# Load environment variables
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-bot = telebot.TeleBot(TOKEN)
+DATA_FILE = "user_data.json"
 
-user_data = {}
+# Logging setup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Command handler for /start
+# Load user data from JSON
+def load_users():
+    try:
+        with open(DATA_FILE, "r") as file:
+            return json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
+# Save user data to JSON
+def save_users(users):
+    with open(DATA_FILE, "w") as file:
+        json.dump(users, file, indent=4)
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    chat_id = message.chat.id
-    user_data[chat_id] = {
-        'url': None,
-        'notifications': False,
-        'last_seen_links': set()
-    }
-    bot.send_message(
-        chat_id, "Hola! Soy un bot para notificarte de nuevas publicaciones en ZonaProp", reply_markup=main_menu())
-    bot.send_message(chat_id, "Usá el menú para configurarme",
-                     reply_markup=main_menu())
+# Initialize user data
+user_data = load_users()
 
-
-# Create main menu markup
+# Main menu buttons
 def main_menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row('Cambiar URL')
-    markup.row('Activar/Desactivar Mensajes')
-    markup.row('Mostrar Configuración')
-    return markup
+    return ReplyKeyboardMarkup([
+        ["Cambiar URL"],
+        ["Activar/Desactivar Mensajes"],
+        ["Mostrar Configuración"]
+    ], resize_keyboard=True)
 
-# Handle text messages
+# /start command
+async def start(update: Update, context: CallbackContext):
+    chat_id = str(update.effective_chat.id)
 
-
-@bot.message_handler(func=lambda message: True)
-def handle_text(message):
-    chat_id = message.chat.id
     if chat_id not in user_data:
-        bot.send_message(chat_id, "Usá /start para inicializar el bot")
+        user_data[chat_id] = {
+            "url": None,
+            "notifications": False,
+            "last_seen_links": []
+        }
+        save_users(user_data)
+
+    await update.message.reply_text(
+        "¡Hola! Soy un bot para notificarte sobre nuevas publicaciones en ZonaProp.",
+        reply_markup=main_menu()
+    )
+    await update.message.reply_text("Usa el menú para configurarme.", reply_markup=main_menu())
+
+# Handle menu options & detect URL input
+async def handle_text(update: Update, context: CallbackContext):
+    chat_id = str(update.effective_chat.id)
+    text = update.message.text.strip()
+
+    if chat_id not in user_data:
+        await update.message.reply_text("Usa /start para inicializar el bot.")
         return
 
-    text = message.text
+    # If user was asked to send a URL, process it
+    if context.user_data.get("awaiting_url"):
+        context.user_data["awaiting_url"] = False  # Reset flag
+        await set_url(update, context)
+        return
 
-    if text == 'Cambiar URL':
-        msg = bot.send_message(
-            chat_id, "Mandame la URL de la búsqueda en ZonaProp que querés seguir")
-        bot.register_next_step_handler(msg, set_url)
+    if text == "Cambiar URL":
+        await update.message.reply_text("Envíame la URL de la búsqueda en ZonaProp que quieres seguir.")
+        context.user_data["awaiting_url"] = True  # Set flag for next message
 
-    elif text == 'Activar/Desactivar Mensajes':
-        current_state = user_data[chat_id]['notifications']
-        user_data[chat_id]['notifications'] = not current_state
-        state_text = "activados" if not current_state else "desactivados"
-        bot.send_message(chat_id, f"Perfecto, ahora los mensajes están {
-                         state_text}", reply_markup=main_menu())
+    elif text == "Activar/Desactivar Mensajes":
+        user_data[chat_id]["notifications"] = not user_data[chat_id]["notifications"]
+        save_users(user_data)
+        state_text = "activados" if user_data[chat_id]["notifications"] else "desactivados"
+        await update.message.reply_text(f"Las notificaciones ahora están {state_text}.", reply_markup=main_menu())
 
         # Start scraping if notifications are activated
-        if not current_state:  # Notifications were off, now turned on
-            start_scraping(chat_id)
+        if user_data[chat_id]["notifications"]:
+            threading.Thread(target=scrape_zonaprop, args=(chat_id,), daemon=True).start()
 
-    elif text == 'Mostrar Configuración':
-        url = user_data[chat_id]['url'] or "no configurada"
-        notifications = "activados" if user_data[chat_id]['notifications'] else "desactivados"
-        bot.send_message(chat_id, f"*Configuración actual*\nURL: {url}\nMensajes: {
-                         notifications}", reply_markup=main_menu(), parse_mode='Markdown')
+    elif text == "Mostrar Configuración":
+        url = user_data[chat_id]["url"] or "No configurada"
+        notifications = "Activados" if user_data[chat_id]["notifications"] else "Desactivados"
+        await update.message.reply_text(
+            f"*Configuración actual:*\n\n- URL: {url}\n- Notificaciones: {notifications}",
+            reply_markup=main_menu(),
+            parse_mode="Markdown"
+        )
 
     else:
-        bot.send_message(chat_id, "Opción inválida", reply_markup=main_menu())
-        bot.send_message(
-            chat_id, "Usá el menú para interactuar con el bot", reply_markup=main_menu())
+        await update.message.reply_text("Opción inválida. Usa el menú para interactuar.", reply_markup=main_menu())
 
-# Set URL handler with validation
+# Handle URL input
+async def set_url(update: Update, context: CallbackContext):
+    chat_id = str(update.effective_chat.id)
+    url = update.message.text.strip()
 
-
-def set_url(message):
-    chat_id = message.chat.id
-    url = message.text.strip()
-
-    # Valid prefixes for the URL
     valid_prefixes = [
         "https://www.zonaprop.com.ar/departamentos",
         "www.zonaprop.com.ar/departamentos",
         "zonaprop.com.ar/departamentos"
     ]
 
-    # Validate URL
     if any(url.startswith(prefix) for prefix in valid_prefixes):
-        # Append filter to the URL
         if "/departamentos" in url:
             split_url = url.split("/departamentos")
-            url = split_url[0] + \
-                "/departamentos/publicado-hace-menos-de-1-dia-orden-precio-ascendente" + \
-                split_url[1]
+            url = split_url[0] + "/departamentos/publicado-hace-menos-de-1-dia-orden-precio-ascendente" + split_url[1]
 
-        user_data[chat_id]['url'] = url
-        bot.send_message(chat_id, f"Listo, la URL ahora es: {
-                         url}", reply_markup=main_menu())
+        user_data[chat_id]["url"] = url
+        save_users(user_data)
+        await update.message.reply_text(f"La URL ha sido configurada como:\n{url}", reply_markup=main_menu())
+
     else:
-        bot.send_message(chat_id, "URL inválida, fijate que sea un link de ZonaProp para buscar departamentos.",
-                         reply_markup=main_menu(), parse_mode='Markdown')
+        await update.message.reply_text("URL inválida. Asegúrate de enviar un link de ZonaProp válido.")
 
 # Scraping function
-
-
 def scrape_zonaprop(chat_id):
-    print("Scraping...")
+    print(f"Scraping for user {chat_id}...")
     driver = Driver(uc=True)
 
-    while True:
-        if chat_id in user_data and user_data[chat_id]['url'] and user_data[chat_id]['notifications']:
-            url = user_data[chat_id]['url']
-            driver.uc_open_with_reconnect(url, 4)
-            driver.uc_gui_click_captcha()
+    while chat_id in user_data and user_data[chat_id]["url"] and user_data[chat_id]["notifications"]:
+        url = user_data[chat_id]["url"]
+        driver.uc_open_with_reconnect(url, 4)
+        driver.uc_gui_click_captcha()
 
-            # Find all elements with the specified class
-            elements = driver.find_elements(
-                By.CSS_SELECTOR, "div[class^='postingCardLayout-module__posting-card-layout__']")
-            new_links = set()
+        elements = driver.find_elements(By.CSS_SELECTOR, "div[class^='postingCardLayout-module__posting-card-layout__']")
+        new_links = {f"https://www.zonaprop.com.ar{el.get_attribute('data-to-posting')}" for el in elements if el.get_attribute("data-to-posting")}
 
-            for element in elements:
-                try:
-                    # Get the 'data-to-posting' attribute
-                    data_to_posting = element.get_attribute("data-to-posting")
-                    if data_to_posting:
-                        full_url = f"https://www.zonaprop.com.ar{
-                            data_to_posting}"
-                        new_links.add(full_url)
-                except Exception as e:
-                    print(f"Error extracting data: {e}")
+        last_seen = set(user_data[chat_id]["last_seen_links"])
+        new_ads = new_links - last_seen
 
-            # Determine new ads
-            last_seen = user_data[chat_id]['last_seen_links']
-            if len(last_seen) == 0:
-                last_seen = new_links
-                # new_ads = set()
-                random.choice(list(new_links))
-                new_ads = {random.choice(list(new_links))}
-            else:
-                new_ads = new_links - last_seen
+        if new_ads:
+            for ad in new_ads:
+                context = Application.builder().token(TOKEN).build()
+                context.bot.send_message(chat_id=chat_id, text=ad, disable_web_page_preview=False)
+            
+            user_data[chat_id]["last_seen_links"] = list(last_seen.union(new_ads))
+            save_users(user_data)
 
-            print(f"New links: {new_links}")
-            print(f"Last seen: {last_seen}")
+        time.sleep(random.uniform(240, 360))  # Sleep 4-6 minutes
 
-            if new_ads:
-                for ad in new_ads:
-                    bot.send_message(
-                        chat_id, f"{ad}", disable_web_page_preview=False)
-                user_data[chat_id]['last_seen_links'] = last_seen.union(
-                    new_ads)
+# Start the bot
+def main():
+    app = Application.builder().token(TOKEN).build()
 
-        sleep_time = random.uniform(240, 360)
-        time.sleep(sleep_time)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-# Start scraping in a separate thread
-
-
-def start_scraping(chat_id):
-    thread = threading.Thread(target=scrape_zonaprop, args=(chat_id,))
-    thread.daemon = True
-    thread.start()
-
-
-# Polling loop
-if __name__ == '__main__':
+    # Start scraping for all users who have notifications enabled
     for chat_id in user_data.keys():
-        start_scraping(chat_id)
+        if user_data[chat_id]["notifications"]:
+            threading.Thread(target=scrape_zonaprop, args=(chat_id,), daemon=True).start()
+
     print("Bot is running...")
-    bot.infinity_polling()
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
