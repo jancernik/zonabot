@@ -40,9 +40,9 @@ user_data = load_users()
 # Main menu buttons
 def main_menu():
     return ReplyKeyboardMarkup([
-        ["Cambiar URL"],
-        ["Activar/Desactivar Mensajes"],
-        ["Mostrar Configuración"]
+        ["Cambiar link de búsqueda"],
+        ["Activar/Desactivar notificaciones"],
+        ["Mostrar configuración"]
     ], resize_keyboard=True)
 
 # /start command
@@ -52,52 +52,97 @@ async def start(update: Update, context: CallbackContext):
     if chat_id not in user_data:
         user_data[chat_id] = {
             "url": None,
-            "notifications": False,
+            "notifications": True,
             "last_seen_links": []
         }
         save_users(user_data)
 
     await update.message.reply_text(
-        "¡Hola! Soy un bot para notificarte sobre nuevas publicaciones en ZonaProp.",
+        "Hola! Soy un bot para ayudarte a encontrar publicaciones en Zonaprop",
         reply_markup=main_menu()
     )
-    await update.message.reply_text("Usa el menú para configurarme.", reply_markup=main_menu())
+    await update.message.reply_text(
+        "Vos te armás una búsqueda con todas las opciones y filtros que quieras y me pasás el link. Yo me encargo de chequear si hay publicaciones nuevas y te aviso si encuentro algo",
+        reply_markup=main_menu()
+    )
+    await update.message.reply_text("Podés mandarme un link directamente o usar el menú para interactuar conmigo", reply_markup=main_menu())
 
-# Handle menu options & detect URL input
 async def handle_text(update: Update, context: CallbackContext):
     chat_id = str(update.effective_chat.id)
     text = update.message.text.strip()
 
     if chat_id not in user_data:
-        await update.message.reply_text("Usa /start para inicializar el bot.")
+        await update.message.reply_text("Usá /start para inicializar el bot ;)")
         return
 
-    if text == "Cambiar URL":
-        await update.message.reply_text("Envíame la URL de la búsqueda en ZonaProp que quieres seguir.")
-        context.user_data["awaiting_url"] = True  
+    valid_prefixes = [
+        "https://www.zonaprop.com.ar/departamentos",
+        "www.zonaprop.com.ar/departamentos",
+        "zonaprop.com.ar/departamentos"
+    ]
 
-    elif text == "Activar/Desactivar Mensajes":
+    # ✅ If user previously selected "Cambiar link de búsqueda", validate their input
+    if context.user_data.get("awaiting_url"):
+        context.user_data["awaiting_url"] = False  # Reset flag
+
+        if any(text.startswith(prefix) for prefix in valid_prefixes):
+            user_data[chat_id]["url"] = text
+            user_data[chat_id]["last_seen_links"] = []  # ✅ Clear last_seen_links when setting a new URL
+            save_users(user_data)
+
+            await update.message.reply_text(f"Listo, ahora el link de búsqueda es:\n{text}", reply_markup=main_menu(), disable_web_page_preview=True)
+
+            if user_data[chat_id]["notifications"]:
+                threading.Thread(target=scrape_zonaprop, args=(chat_id,), daemon=True).start()
+        else:
+            await update.message.reply_text("El link que mandaste no es válido. Fijate que sea un link de Zonaprop. Si pensás que es un error avisale a Jan :P", reply_markup=main_menu())
+
+        return  # ✅ Exit function after handling URL
+
+    # ✅ If user sends a valid ZonaProp URL directly, process it
+    if any(text.startswith(prefix) for prefix in valid_prefixes):
+        user_data[chat_id]["url"] = text
+        user_data[chat_id]["last_seen_links"] = []  # ✅ Clear last_seen_links when setting a new URL
+        save_users(user_data)
+
+        await update.message.reply_text(f"Listo, ahora el link de búsqueda es:\n{text}", reply_markup=main_menu(), disable_web_page_preview=True)
+
+        if user_data[chat_id]["notifications"]:
+            threading.Thread(target=scrape_zonaprop, args=(chat_id,), daemon=True).start()
+        return  # ✅ Exit function after handling URL
+
+    # ✅ Handle existing menu options
+    if text == "Cambiar link de búsqueda":
+        await update.message.reply_text("Dale, mandame el link de la búsqueda que quieras seguir")
+        context.user_data["awaiting_url"] = True  # Set flag to expect a URL input
+
+    elif text == "Activar/Desactivar notificaciones":
         user_data[chat_id]["notifications"] = not user_data[chat_id]["notifications"]
 
         if not user_data[chat_id]["notifications"]:
             user_data[chat_id]["last_seen_links"] = []  
 
         save_users(user_data)
-        state_text = "activados" if user_data[chat_id]["notifications"] else "desactivados"
-        await update.message.reply_text(f"Las notificaciones ahora están {state_text}.", reply_markup=main_menu())
+        state_text = "activadas" if user_data[chat_id]["notifications"] else "desactivadas"
+        await update.message.reply_text(f"Las notificaciones ahora están {state_text}", reply_markup=main_menu())
 
-        # Start scraping if notifications are activated
         if user_data[chat_id]["notifications"] and user_data[chat_id]["url"]:
             threading.Thread(target=scrape_zonaprop, args=(chat_id,), daemon=True).start()
 
-    elif text == "Mostrar Configuración":
-        url = user_data[chat_id]["url"] or "No configurada"
-        notifications = "Activados" if user_data[chat_id]["notifications"] else "Desactivados"
+    elif text == "Mostrar configuración":
+        url = user_data[chat_id]["url"] or "No configurado"
+        notifications = "Activadas" if user_data[chat_id]["notifications"] else "Desactivadas"
         await update.message.reply_text(
-            f"*Configuración actual:*\n\n- URL: {url}\n- Notificaciones: {notifications}",
+            f"*Configuración actual:*\n\n- Notificaciones: {notifications}\n- Link de búsqueda: {url}",
             reply_markup=main_menu(),
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            disable_web_page_preview=True
         )
+
+    else:
+        # ✅ If input is neither a valid URL nor a menu option, send generic error
+        await update.message.reply_text("Mmmm, no entendí. Mejor usá el menú para interactuar conmigo", reply_markup=main_menu())
+        await update.message.reply_text("Soy medio boludo igual así que si tenés algún problema avisale a Jan :)", reply_markup=main_menu())
 
 # Handle URL input
 async def set_url(update: Update, context: CallbackContext):
@@ -115,10 +160,10 @@ async def set_url(update: Update, context: CallbackContext):
         user_data[chat_id]["last_seen_links"] = []  
         save_users(user_data)
 
-        await update.message.reply_text(f"La URL ha sido configurada como:\n{url}", reply_markup=main_menu())
+        await update.message.reply_text(f"Listo, ahora el link de búsqueda es:\n{url}", reply_markup=main_menu())
 
     else:
-        await update.message.reply_text("URL inválida. Asegúrate de enviar un link de ZonaProp válido.")
+        await update.message.reply_text("El link que mandaste no es válido. Fijate que sea un link de Zonaprop. Si pensás que es un error avisale a Jan :P")
 
 # Scraping function
 def scrape_zonaprop(chat_id):
@@ -156,7 +201,7 @@ def scrape_zonaprop(chat_id):
                     for index, ad in enumerate(new_ads):
                         if index == len(new_ads) - 1:  
                             keyboard = InlineKeyboardMarkup([
-                                [InlineKeyboardButton("🔕 Desactivar Notificaciones", callback_data=f"toggle_{chat_id}")]
+                                [InlineKeyboardButton("Desactivar notificaciones", callback_data=f"toggle_{chat_id}")]
                             ])
                             await app.bot.send_message(
                                 chat_id=chat_id,
@@ -172,8 +217,7 @@ def scrape_zonaprop(chat_id):
             user_data[chat_id]["last_seen_links"] = list(last_seen.union(new_ads))
             save_users(user_data)
 
-        # time.sleep(random.uniform(240, 360))  
-        time.sleep(random.uniform(10, 20))  
+        time.sleep(random.uniform(240, 360))  
 
 # Handle inline button click
 async def toggle_notifications(update: Update, context: CallbackContext):
@@ -185,7 +229,7 @@ async def toggle_notifications(update: Update, context: CallbackContext):
     save_users(user_data)
 
     await query.edit_message_reply_markup(reply_markup=None)  
-    await query.answer("Las notificaciones han sido desactivadas.")
+    await query.answer("Listo, desactivé las notificaciones")
 
 # Start the bot
 def main():
