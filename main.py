@@ -207,8 +207,7 @@ def scrape_zonaprop(chat_id):
 
         elements = driver.find_elements(
             By.CSS_SELECTOR, "div.postingCardLayout-module__posting-card-layout")
-        new_links = {f"https://www.zonaprop.com.ar{el.get_attribute(
-            'data-to-posting')}" for el in elements if el.get_attribute("data-to-posting")}
+        new_links = {f"https://www.zonaprop.com.ar{el.get_attribute('data-to-posting')}" for el in elements if el.get_attribute("data-to-posting")}
 
         print(f"New links found for {chat_id}: {new_links}")
         last_seen = set(user_data[chat_id]["last_seen_links"])
