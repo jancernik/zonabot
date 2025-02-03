@@ -60,7 +60,23 @@ async def start(update: Update, context: CallbackContext):
         reply_markup=main_menu()
     )
     await update.message.reply_text("Podés mandarme un link directamente o usar el menú para interactuar conmigo", reply_markup=main_menu())
-
+    
+def clean_url(url):
+  if "/departamentos" in url:
+      url = url.replace("-publicado-hace-menos-de-2-dias", "")
+      url = url.replace("-publicado-hace-menos-de-1-dia", "")
+      url = url.replace("-publicado-hace-menos-de-1-semana", "")
+      url = url.replace("-publicado-hace-menos-de-15-dias", "")
+      url = url.replace("-publicado-hace-menos-de-1-mes", "")
+      url = url.replace("-publicado-hace-menos-de-45-dias", "")
+      url = url.replace("-orden-precio-ascendente", "")
+      url = url.replace("-orden-precio-descendente", "")
+      url = url.replace("-orden-publicado-descendente", "")
+      url = url.replace("-orden-visitas-descendente", "")
+      url = url.replace("-orden-variacionporcentual-descendente", "")
+      split_url = url.split("/departamentos")
+      url = split_url[0] + "/departamentos/publicado-hace-menos-de-1-dia-orden-precio-ascendente" + split_url[1]
+  return url
 
 async def handle_text(update: Update, context: CallbackContext):
     chat_id = str(update.effective_chat.id)
@@ -80,6 +96,7 @@ async def handle_text(update: Update, context: CallbackContext):
         context.user_data["awaiting_url"] = False
 
         if any(text.startswith(prefix) for prefix in valid_prefixes):
+            text = clean_url(text)
             user_data[chat_id]["url"] = text
             user_data[chat_id]["last_seen_links"] = []
             save_users(user_data)
@@ -94,6 +111,7 @@ async def handle_text(update: Update, context: CallbackContext):
         return
 
     if any(text.startswith(prefix) for prefix in valid_prefixes):
+        text = clean_url(text)
         user_data[chat_id]["url"] = text
         user_data[chat_id]["last_seen_links"] = []
         save_users(user_data)
@@ -148,6 +166,7 @@ async def set_url(update: Update, context: CallbackContext):
     ]
 
     if any(url.startswith(prefix) for prefix in valid_prefixes):
+        url = clean_url(url)
         user_data[chat_id]["url"] = url
         user_data[chat_id]["last_seen_links"] = []
         save_users(user_data)
