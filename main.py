@@ -149,8 +149,7 @@ async def handle_text(update: Update, context: CallbackContext):
         url = user_data[chat_id]["url"] or "No configurado"
         notifications = "Activadas" if user_data[chat_id]["notifications"] else "Desactivadas"
         await update.message.reply_text(
-            f"*Configuración actual:*\n\n- Notificaciones: {
-                notifications}\n- Link de búsqueda: {url}",
+            f"*Configuración actual:*\n\n- Notificaciones: {notifications}\n- Link de búsqueda: {url}",
             reply_markup=main_menu(),
             parse_mode="Markdown",
             disable_web_page_preview=True
