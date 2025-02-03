@@ -193,8 +193,7 @@ def scrape_zonaprop(chat_id):
 
     while True:
         if chat_id not in user_data or not user_data[chat_id]["notifications"] or not user_data[chat_id]["url"]:
-            print(f"Stopping scraper for {
-                  chat_id} (notifications disabled or URL missing)")
+            print(f"Stopping scraper for {chat_id} (notifications disabled or URL missing)")
             break
 
         url = user_data[chat_id]["url"]

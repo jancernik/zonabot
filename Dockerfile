@@ -8,7 +8,5 @@ WORKDIR /app
 COPY . .
 
 # Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Run bot
-CMD ["python", "main.py"]
+
