@@ -17,19 +17,23 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 DATA_FILE = "user_data.json"
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def load_users():
     try:
         with open(DATA_FILE, "r") as file:
             return json.load(file)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.error(f"Error loading user data: {e}")
         return {}
 
 def save_users(users):
-    with open(DATA_FILE, "w") as file:
-        json.dump(users, file, indent=4)
+    try:
+        with open(DATA_FILE, "w") as file:
+            json.dump(users, file, indent=4)
+    except Exception as e:
+        logger.error(f"Error saving user data: {e}")
 
 user_data = load_users()
 
@@ -177,61 +181,61 @@ async def set_url(update: Update, context: CallbackContext):
         await update.message.reply_text("El link que mandaste no es válido. Fijate que sea un link de Zonaprop. Si pensás que es un error avisale a Jan :P")
 
 def scrape_zonaprop(chat_id):
-    print(f"Scraping for user {chat_id}...")
+    logger.info(f"Starting scraper for user {chat_id}...")
     app = Application.builder().token(TOKEN).build()
 
     while True:
-        if chat_id not in user_data or not user_data[chat_id]["notifications"] or not user_data[chat_id]["url"]:
-            print(f"Stopping scraper for {chat_id} (notifications disabled or URL missing)")
-            break
+        try:
+            if chat_id not in user_data or not user_data[chat_id].get("notifications") or not user_data[chat_id].get("url"):
+                logger.info(f"Stopping scraper for {chat_id} (notifications disabled or URL missing)")
+                break
 
-        with SB(uc=True, xvfb=True) as driver:
-            url = user_data[chat_id]["url"]
-            driver.uc_open_with_reconnect(url, 4)
-            driver.uc_gui_click_captcha()
-            driver.sleep(1)
+            with SB(uc=True, xvfb=True) as driver:
+                url = user_data[chat_id]["url"]
+                logger.info(f"Scraping URL for {chat_id}: {url}")
+                driver.uc_open_with_reconnect(url, 4)
+                driver.uc_gui_click_captcha()
+                driver.sleep(1)
 
-            driver.execute_script("""
-              const suggested = document.querySelector("div.thin-postings-container");
-              suggested && suggested.parentNode && suggested.parentNode.removeChild(suggested);
-            """)
+                driver.execute_script("""
+                  const suggested = document.querySelector("div.thin-postings-container");
+                  suggested && suggested.parentNode && suggested.parentNode.removeChild(suggested);
+                """)
 
-            elements = driver.find_elements(
-                By.CSS_SELECTOR, "div.postingCardLayout-module__posting-card-layout")
-            new_links = {f"https://www.zonaprop.com.ar{el.get_attribute('data-to-posting')}" for el in elements if el.get_attribute("data-to-posting")}
+                elements = driver.find_elements(By.CSS_SELECTOR, "div.postingCardLayout-module__posting-card-layout")
+                new_links = {f"https://www.zonaprop.com.ar{el.get_attribute('data-to-posting')}" for el in elements if el.get_attribute("data-to-posting")}
+                logger.info(f"Found {len(new_links)} new links for {chat_id}")
 
-            print(f"New links found for {chat_id}: {new_links}")
-            last_seen = set(user_data[chat_id]["last_seen_links"])
-            new_ads = new_links - last_seen
+                last_seen = set(user_data[chat_id]["last_seen_links"])
+                new_ads = new_links - last_seen
 
-            if not last_seen:
-                user_data[chat_id]["last_seen_links"] = list(new_links)
-                save_users(user_data)
-            elif new_ads:
-                async def send_messages():
-                    async with app:
-                        for index, ad in enumerate(new_ads):
-                            if index == len(new_ads) - 1:
-                                keyboard = InlineKeyboardMarkup([
-                                    [InlineKeyboardButton(
-                                        "Desactivar notificaciones", callback_data=f"toggle_{chat_id}")]
-                                ])
-                                await app.bot.send_message(
-                                    chat_id=chat_id,
-                                    text=ad,
-                                    disable_web_page_preview=False,
-                                    reply_markup=keyboard
-                                )
-                            else:
-                                await app.bot.send_message(chat_id=chat_id, text=ad, disable_web_page_preview=False)
+                if not last_seen:
+                    user_data[chat_id]["last_seen_links"] = list(new_links)
+                    save_users(user_data)
+                elif new_ads:
+                    async def send_messages():
+                        async with app:
+                            for index, ad in enumerate(new_ads):
+                                keyboard = None
+                                if index == len(new_ads) - 1:
+                                    keyboard = InlineKeyboardMarkup([
+                                        [InlineKeyboardButton("Desactivar notificaciones", callback_data=f"toggle_{chat_id}")]
+                                    ])
+                                await app.bot.send_message(chat_id=chat_id, text=ad, disable_web_page_preview=False, reply_markup=keyboard)
+                    
+                    asyncio.run(send_messages())
+                    user_data[chat_id]["last_seen_links"] = list(last_seen.union(new_ads))
+                    save_users(user_data)
 
-                asyncio.run(send_messages())
+                sleep_time = random.uniform(4, 7)
+                # sleep_time = random.uniform(240, 360)
+                logger.info(f"Sleeping for {sleep_time} seconds before next scrape for {chat_id}")
+                time.sleep(sleep_time)
 
-                user_data[chat_id]["last_seen_links"] = list(
-                    last_seen.union(new_ads))
-                save_users(user_data)
-
-            time.sleep(random.uniform(240, 360))
+        except Exception as e:
+            logger.error(f"Error in scraper loop for {chat_id}: {e}")
+            # time.sleep(60)  # Wait before retrying to prevent a crash loop
+            time.sleep(6) 
 
 async def toggle_notifications(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -248,20 +252,16 @@ def main():
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(CallbackQueryHandler(
-        toggle_notifications, pattern=r"toggle_\d+"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CallbackQueryHandler(toggle_notifications, pattern=r"toggle_\d+"))
 
     for chat_id in user_data.keys():
-        if user_data[chat_id]["notifications"]:
-            print(f"Starting scraper for {chat_id}")
-            threading.Thread(target=scrape_zonaprop, args=(
-                chat_id,), daemon=True).start()
+        if user_data[chat_id].get("notifications"):
+            logger.info(f"Launching scraper thread for {chat_id}")
+            threading.Thread(target=scrape_zonaprop, args=(chat_id,), daemon=True).start()
 
-    print("Bot is running...")
+    logger.info("Bot is running...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
