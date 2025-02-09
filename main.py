@@ -229,15 +229,13 @@ def scrape_zonaprop(chat_id):
                     user_data[chat_id]["last_seen_links"] = list(last_seen.union(new_ads))
                     save_users(user_data)
 
-                sleep_time = random.uniform(4, 7)
-                # sleep_time = random.uniform(240, 360)
+                sleep_time = random.uniform(240, 360)
                 logger.info(f"Sleeping for {sleep_time} seconds before next scrape for {chat_id}")
                 time.sleep(sleep_time)
 
         except Exception as e:
             logger.error(f"Error in scraper loop for {chat_id}: {e}")
-            # time.sleep(60)  # Wait before retrying to prevent a crash loop
-            time.sleep(6) 
+            time.sleep(60)
 
 async def toggle_notifications(update: Update, context: CallbackContext):
     query = update.callback_query
