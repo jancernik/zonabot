@@ -18,6 +18,8 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 DATA_FILE = "user_data.json"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 def load_users():
