@@ -412,7 +412,7 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                     
                     # Send a summary message
                     summary_message = (
-                        f"Encontré {len(new_links)} publicaciones que se subieron hoy.\n"
+                        f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
                         f"Voy a empezar a enviarte mensajes cuando aparezcan publicaciones nuevas."
                     )
                     send_telegram_message(
@@ -434,7 +434,7 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                 if summary_only:
                     # Send only a summary message
                     summary_message = (
-                        f"Encontré {len(new_links)} publicaciones que se subieron hoy.\n"
+                        f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
                         f"Voy a empezar a enviarte mensajes cuando aparezcan publicaciones nuevas."
                     )
                     send_telegram_message(
