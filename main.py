@@ -244,7 +244,7 @@ async def handle_text(update: Update, context: CallbackContext):
             return
             
         await update.message.reply_text(
-            "Iniciando búsqueda manual...",
+            "Estoy mirando las publicaciones, dame un segundo...",
             reply_markup=main_menu()
         )
         
