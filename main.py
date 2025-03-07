@@ -238,7 +238,7 @@ async def handle_text(update: Update, context: CallbackContext):
     elif text == "Forzar búsqueda ahora":
         if not user_data[chat_id]["url"]:
             await update.message.reply_text(
-                "Primero necesito un link de búsqueda. Usá 'Cambiar link de búsqueda'",
+                "Primero necesito un link de búsqueda. Podés mandarme uno directamente o usar el menú",
                 reply_markup=main_menu()
             )
             return
@@ -412,8 +412,8 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                     
                     # Send a summary message
                     summary_message = (
-                        f"He encontrado {len(new_links)} publicaciones del día de hoy.\n"
-                        f"Voy a empezar a enviarte notificaciones cuando aparezcan publicaciones nuevas."
+                        f"Encontré {len(new_links)} publicaciones que se subieron hoy.\n"
+                        f"Voy a empezar a enviarte mensajes cuando aparezcan publicaciones nuevas."
                     )
                     send_telegram_message(
                         chat_id=chat_id,
@@ -434,8 +434,8 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                 if summary_only:
                     # Send only a summary message
                     summary_message = (
-                        f"He encontrado {len(notify_ads)} publicaciones del día de hoy.\n"
-                        f"Voy a empezar a enviarte notificaciones cuando aparezcan publicaciones nuevas."
+                        f"Encontré {len(new_links)} publicaciones que se subieron hoy.\n"
+                        f"Voy a empezar a enviarte mensajes cuando aparezcan publicaciones nuevas."
                     )
                     send_telegram_message(
                         chat_id=chat_id,
