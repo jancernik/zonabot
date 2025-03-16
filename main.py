@@ -1,10 +1,12 @@
 import os
 import json
 import time
+import signal
 import logging
 import random
 import threading
 import requests
+import sys
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
@@ -31,6 +33,9 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+
+# Flag to indicate the bot is shutting down
+is_shutting_down = False
 
 def send_telegram_message(chat_id, text, reply_markup=None, disable_web_page_preview=False):
     """Send a message to Telegram using direct HTTP API calls instead of the Bot object"""
@@ -231,7 +236,6 @@ async def handle_text(update: Update, context: CallbackContext):
             f"- Última búsqueda: {last_scan}\n"
             f"- Link de búsqueda: {original_url}",
             reply_markup=main_menu(),
-            parse_mode="Markdown",
             disable_web_page_preview=True
         )
     
@@ -291,6 +295,10 @@ def toggle_user_notifications(chat_id):
 
 def restart_scraper(chat_id, initialization=False):
     """Restart the scraper for a user"""
+    if is_shutting_down:
+        logger.info(f"Not starting scraper for {chat_id} because system is shutting down")
+        return
+        
     stop_scraper(chat_id)
     
     # Schedule a new scraper task
@@ -314,7 +322,7 @@ def scraper_worker(chat_id, initialization=False):
     if initialization:
         single_scrape_run(chat_id, False, True)  # False for no force_notify, True for summary_only
     
-    while True:
+    while not is_shutting_down:
         try:
             # Check if we should continue running
             with user_data_lock:
@@ -332,12 +340,25 @@ def scraper_worker(chat_id, initialization=False):
             # Sleep between 4-6 minutes before next check
             sleep_time = random.uniform(240, 360)
             logger.info(f"Sleeping for {sleep_time:.1f} seconds before next scrape for {chat_id}")
-            time.sleep(sleep_time)
+            
+            # Sleep in smaller increments so we can check for shutdown signal
+            for _ in range(int(sleep_time / 10)):
+                if is_shutting_down:
+                    logger.info(f"Scraper for {chat_id} received shutdown signal during sleep")
+                    break
+                time.sleep(10)
+                
+            # Sleep the remainder
+            remaining_sleep = sleep_time % 10
+            if remaining_sleep > 0 and not is_shutting_down:
+                time.sleep(remaining_sleep)
             
         except Exception as e:
             logger.error(f"Error in scraper loop for {chat_id}: {e}", exc_info=True)
             # Sleep for 1 minute on error before retrying
             time.sleep(60)
+    
+    logger.info(f"Scraper for {chat_id} exiting due to shutdown signal")
 
 def single_scrape_run(chat_id, force_notify=False, summary_only=False):
     """Perform a single scrape run and notify if new listings found
@@ -347,6 +368,10 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
         force_notify: If True, send notifications regardless of whether ads are new
         summary_only: If True, only send a summary message, not individual ads
     """
+    if is_shutting_down:
+        logger.info(f"Skipping scrape for {chat_id} because system is shutting down")
+        return 0
+        
     logger.info(f"Running scrape for user {chat_id}")
     
     try:
@@ -354,15 +379,15 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
         with user_data_lock:
             if chat_id not in user_data:
                 logger.info(f"User {chat_id} no longer exists, stopping scrape")
-                return
+                return 0
                 
             if not user_data[chat_id].get("url"):
                 logger.info(f"User {chat_id} has no URL configured, stopping scrape")
-                return
+                return 0
                 
             if not force_notify and not user_data[chat_id].get("notifications"):
                 logger.info(f"User {chat_id} has notifications disabled, stopping scrape")
-                return
+                return 0
         
         # Use a fresh browser instance for each scrape
         with SB(uc=True, xvfb=True) as driver:
@@ -423,6 +448,11 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                     user_data[chat_id]["last_seen_links"] = list(new_links)
                     save_users(user_data)
                     return 1  # Count the summary message
+            
+            # Check if we're shutting down
+            if is_shutting_down:
+                logger.info(f"Aborting notification process for {chat_id} due to shutdown")
+                return 0
                 
             # If we have new ads to notify about
             if new_ads or force_notify:
@@ -454,6 +484,11 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                     # Send notifications for each listing
                     sent_count = 0
                     for index, ad in enumerate(notify_ads):
+                        # Check if we're shutting down
+                        if is_shutting_down:
+                            logger.info(f"Stopping notification process for {chat_id} due to shutdown")
+                            break
+                            
                         # Add toggle button to the last message
                         keyboard = None
                         if index == len(notify_ads) - 1:
@@ -499,8 +534,36 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
     
     return 0
 
-def main():
+def shutdown_handler(signum, frame):
+    """Handle shutdown signals properly"""
+    global is_shutting_down
+    is_shutting_down = True
+    logger.info(f"Received shutdown signal {signum}. Starting graceful shutdown...")
+    
+    # Save user data one final time
+    save_users(user_data)
+    
+    # Mark all scrapers for termination
+    for chat_id in list(active_scrapers.keys()):
+        stop_scraper(chat_id)
+    
+    # Shut down the executor
+    executor.shutdown(wait=False)
+    logger.info("ThreadPoolExecutor shutdown initiated")
+    
+    # Give threads a moment to notice the shutdown signal
+    time.sleep(2)
+    
+    # Exit with success code
+    logger.info("Exiting with success code")
+    sys.exit(0)
+
+async def main():
     """Main function to start the bot"""
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, shutdown_handler)   # Ctrl+C
+    signal.signal(signal.SIGTERM, shutdown_handler)  # systemctl stop
+    
     # Create the application
     app = Application.builder().token(TOKEN).build()
     
@@ -513,19 +576,23 @@ def main():
     for chat_id in user_data.keys():
         if user_data[chat_id].get("notifications") and user_data[chat_id].get("url"):
             logger.info(f"Launching scraper thread for {chat_id}")
-            restart_scraper(chat_id)
+            restart_scraper(chat_id, True)  # True for initialization
     
-    # Start polling
+    # Start polling with proper shutdown
     logger.info("Bot is running...")
-    app.run_polling()
+    await app.run_polling(stop_signals=(signal.SIGINT, signal.SIGTERM), close_loop=False)
 
 if __name__ == "__main__":
     try:
-        # Run the bot
-        main()
+        # Setup asyncio event loop
+        import asyncio
+        asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    finally:
-        # Clean up resources
-        executor.shutdown(wait=False)
-        logger.info("Executor shutdown")
+        logger.info("Bot stopped by KeyboardInterrupt")
+        shutdown_handler(signal.SIGINT, None)
+    except SystemExit:
+        # This will be triggered by our shutdown handler
+        pass
+    except Exception as e:
+        logger.error(f"Unhandled exception: {e}", exc_info=True)
+        shutdown_handler(signal.SIGTERM, None)
