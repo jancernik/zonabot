@@ -2,3 +2,5 @@ tempCodeRunnerFile.py
 downloaded_files/*
 user_data.json
 .env
+venv
+*.log
