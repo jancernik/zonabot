@@ -7,7 +7,7 @@ import random
 import threading
 import requests
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
 from seleniumbase import SB
@@ -135,6 +135,7 @@ def set_user_url(chat_id, url, original_url):
         user_data[chat_id]["original_url"] = original_url
         user_data[chat_id]["last_seen_links"] = []
         user_data[chat_id]["last_scan"] = None
+        user_data[chat_id]["initialized"] = False  # Reset initialization status
         save_users(user_data)
 
 def toggle_user_notifications(chat_id):
@@ -143,6 +144,9 @@ def toggle_user_notifications(chat_id):
         user_data[chat_id]["notifications"] = not user_data[chat_id]["notifications"]
         if not user_data[chat_id]["notifications"]:
             user_data[chat_id]["last_seen_links"] = []
+        else:
+            # If turning ON notifications, we should reset the initialization
+            user_data[chat_id]["initialized"] = False
         save_users(user_data)
 
 def restart_scraper(chat_id, initialization=False):
@@ -240,6 +244,9 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
             if not force_notify and not user_data[chat_id].get("notifications"):
                 logger.info(f"User {chat_id} has notifications disabled, stopping scrape")
                 return 0
+                
+            # Get initialization status
+            is_initialized = user_data[chat_id].get("initialized", False)
         
         # Use a fresh browser instance for each scrape
         with SB(uc=True, xvfb=True) as driver:
@@ -284,19 +291,28 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                 new_ads = new_links - last_seen
                 
                 # If this is the first run or force_notify is True, don't send notifications
-                if not last_seen and not force_notify:
+                # Changed condition from "not last_seen" to "not is_initialized"
+                if not is_initialized and not force_notify:
                     logger.info(f"First run for {chat_id}, saving {len(new_links)} initial listings")
                     
                     # Send a summary message
-                    summary_message = (
-                        f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
-                        f"Voy a empezar a enviarte mensajes cuando aparezcan publicaciones nuevas."
-                    )
+                    if len(new_links) == 0:
+                        summary_message = (
+                            f"Por ahora no encontré publicaciones que se hayan subido hoy. \n"
+                            f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
+                        )
+                    else:
+                        summary_message = (
+                            f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
+                            f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
+                        )
                     send_telegram_message(
                         chat_id=chat_id,
                         text=summary_message
                     )
                     
+                    # Mark as initialized and save links
+                    user_data[chat_id]["initialized"] = True
                     user_data[chat_id]["last_seen_links"] = list(new_links)
                     save_users(user_data)
                     return 1  # Count the summary message
@@ -315,10 +331,16 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                 # Send either a summary or individual notifications
                 if summary_only:
                     # Send only a summary message
-                    summary_message = (
-                        f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
-                        f"Voy a empezar a enviarte mensajes cuando aparezcan publicaciones nuevas."
-                    )
+                    if len(new_links) == 0:
+                        summary_message = (
+                            f"Por ahora no encontré publicaciones que se hayan subido hoy. \n"
+                            f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
+                        )
+                    else:
+                        summary_message = (
+                            f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
+                            f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
+                        )
                     send_telegram_message(
                         chat_id=chat_id,
                         text=summary_message
@@ -410,7 +432,8 @@ def handle_message(update):
                     "notifications": True,
                     "last_seen_links": [],
                     "last_scan": None,
-                    "awaiting_url": False
+                    "awaiting_url": False,
+                    "initialized": False
                 }
                 save_users(user_data)
                 
@@ -505,7 +528,7 @@ def handle_message(update):
         original_url = user_data[chat_id].get("original_url") or "No configurado"
         url = user_data[chat_id]["url"] or "No configurado"
         notifications = "Activadas" if user_data[chat_id]["notifications"] else "Desactivadas"
-        last_scan = "Nunca" if not user_data[chat_id].get("last_scan") else user_data[chat_id]["last_scan"]
+        last_scan = "Nunca" if not user_data[chat_id].get("last_scan") else (datetime.strptime(user_data[chat_id]["last_scan"], "%Y-%m-%d %H:%M:%S") - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
         
         send_telegram_message(
             chat_id=chat_id,
