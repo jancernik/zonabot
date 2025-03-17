@@ -1,18 +1,19 @@
 import os
 import json
 import time
+import signal
 import logging
 import random
 import threading
 import requests
+import sys
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 from seleniumbase import SB
 from dotenv import load_dotenv
 from selenium.webdriver.common.by import By
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
+import telegram
 
 # Load environment variables
 load_dotenv()
@@ -32,6 +33,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+# Flag to indicate the bot is shutting down
+is_shutting_down = False
+
 def send_telegram_message(chat_id, text, reply_markup=None, disable_web_page_preview=False):
     """Send a message to Telegram using direct HTTP API calls instead of the Bot object"""
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -44,8 +48,7 @@ def send_telegram_message(chat_id, text, reply_markup=None, disable_web_page_pre
     
     # Add reply_markup if provided
     if reply_markup:
-        if isinstance(reply_markup, InlineKeyboardMarkup):
-            payload["reply_markup"] = reply_markup.to_dict()
+        payload["reply_markup"] = reply_markup
     
     try:
         response = requests.post(url, json=payload)
@@ -82,14 +85,17 @@ def save_users(users):
 # Load initial user data
 user_data = load_users()
 
-def main_menu():
+def main_menu_keyboard():
     """Create the main menu keyboard"""
-    return ReplyKeyboardMarkup([
-        ["Cambiar link de búsqueda"],
-        ["Activar/Desactivar notificaciones"],
-        ["Forzar búsqueda ahora"],
-        ["Mostrar información"]
-    ], resize_keyboard=True)
+    return {
+        "keyboard": [
+            ["Cambiar link de búsqueda"],
+            ["Activar/Desactivar notificaciones"],
+            ["Forzar búsqueda ahora"],
+            ["Mostrar información"]
+        ],
+        "resize_keyboard": True
+    }
 
 def clean_url(url):
     """Clean the Zonaprop URL to ensure consistent formatting"""
@@ -122,156 +128,6 @@ def is_valid_zonaprop_url(url):
     ]
     return any(url.startswith(prefix) for prefix in valid_prefixes)
 
-async def start_command(update: Update, context: CallbackContext):
-    """Handle the /start command"""
-    chat_id = str(update.effective_chat.id)
-    
-    with user_data_lock:
-        if chat_id not in user_data:
-            user_data[chat_id] = {
-                "url": None,
-                "original_url": None,
-                "notifications": True,
-                "last_seen_links": [],
-                "last_scan": None
-            }
-            save_users(user_data)
-    
-    await update.message.reply_text(
-        "Hola! Soy un bot para ayudarte a encontrar publicaciones en Zonaprop",
-        reply_markup=main_menu()
-    )
-    await update.message.reply_text(
-        "Vos te armás una búsqueda con todas las opciones y filtros que quieras y me pasás el link. "
-        "Yo me encargo de chequear si hay publicaciones nuevas y te aviso si encuentro algo",
-        reply_markup=main_menu()
-    )
-    await update.message.reply_text(
-        "Podés mandarme un link directamente o usar el menú para interactuar conmigo",
-        reply_markup=main_menu()
-    )
-
-async def handle_text(update: Update, context: CallbackContext):
-    """Handle text messages from users"""
-    chat_id = str(update.effective_chat.id)
-    text = update.message.text.strip()
-    
-    # Initialize user if not exists
-    with user_data_lock:
-        if chat_id not in user_data:
-            await update.message.reply_text("Usá /start para inicializar el bot ;)")
-            return
-    
-    # Check if waiting for URL
-    if context.user_data.get("awaiting_url"):
-        context.user_data["awaiting_url"] = False
-        
-        if is_valid_zonaprop_url(text):
-            clean_search_url = clean_url(text)
-            set_user_url(chat_id, clean_search_url, text)
-            await update.message.reply_text(
-                f"Listo, ahora el link de búsqueda es:\n{text}",
-                reply_markup=main_menu(),
-                disable_web_page_preview=True
-            )
-            
-            # Start scraper if notifications are enabled
-            if user_data[chat_id]["notifications"]:
-                restart_scraper(chat_id, True)  # True to indicate initialization
-        else:
-            await update.message.reply_text(
-                "El link que mandaste no es válido. Fijate que sea un link de Zonaprop. "
-                "Si pensás que es un error avisale a Jan :P",
-                reply_markup=main_menu()
-            )
-        return
-    
-    # Handle direct URL submission
-    if is_valid_zonaprop_url(text):
-        clean_search_url = clean_url(text)
-        set_user_url(chat_id, clean_search_url, text)
-        await update.message.reply_text(
-            f"Listo, ahora el link de búsqueda es:\n{text}",
-            reply_markup=main_menu(),
-            disable_web_page_preview=True
-        )
-        
-        # Start scraper if notifications are enabled
-        if user_data[chat_id]["notifications"]:
-            restart_scraper(chat_id, True)  # True to indicate initialization
-        return
-    
-    # Handle menu options
-    if text == "Cambiar link de búsqueda":
-        context.user_data["awaiting_url"] = True
-        await update.message.reply_text("Dale, mandame el link de la búsqueda que quieras seguir")
-    
-    elif text == "Activar/Desactivar notificaciones":
-        toggle_user_notifications(chat_id)
-        state_text = "activadas" if user_data[chat_id]["notifications"] else "desactivadas"
-        await update.message.reply_text(
-            f"Las notificaciones ahora están {state_text}",
-            reply_markup=main_menu()
-        )
-        
-        # Start or stop scraper based on notification setting
-        if user_data[chat_id]["notifications"] and user_data[chat_id]["url"]:
-            restart_scraper(chat_id, True)  # True to indicate initialization
-        else:
-            stop_scraper(chat_id)
-    
-    elif text == "Mostrar información":
-        original_url = user_data[chat_id].get("original_url") or "No configurado"
-        url = user_data[chat_id]["url"] or "No configurado"
-        notifications = "Activadas" if user_data[chat_id]["notifications"] else "Desactivadas"
-        last_scan = "Nunca" if not user_data[chat_id].get("last_scan") else user_data[chat_id]["last_scan"]
-        
-        await update.message.reply_text(
-            f"- Notificaciones: {notifications}\n"
-            f"- Última búsqueda: {last_scan}\n"
-            f"- Link de búsqueda: {original_url}",
-            reply_markup=main_menu(),
-            parse_mode="Markdown",
-            disable_web_page_preview=True
-        )
-    
-    elif text == "Forzar búsqueda ahora":
-        if not user_data[chat_id]["url"]:
-            await update.message.reply_text(
-                "Primero necesito un link de búsqueda. Podés mandarme uno directamente o usar el menú",
-                reply_markup=main_menu()
-            )
-            return
-            
-        await update.message.reply_text(
-            "Estoy mirando las publicaciones, dame un segundo...",
-            reply_markup=main_menu()
-        )
-        
-        # Force a single scrape run
-        executor.submit(single_scrape_run, chat_id, True, True)  # Second True means force_summary_only
-    
-    else:
-        await update.message.reply_text(
-            "Mmmm, no entendí. Mejor usá el menú para interactuar conmigo",
-            reply_markup=main_menu()
-        )
-        await update.message.reply_text(
-            "Soy medio boludo igual así que si tenés algún problema avisale a Jan :)",
-            reply_markup=main_menu()
-        )
-
-async def callback_handler(update: Update, context: CallbackContext):
-    """Handle callback queries from inline buttons"""
-    query = update.callback_query
-    data = query.data
-    
-    if data.startswith("toggle_"):
-        chat_id = data.split("_")[1]
-        toggle_user_notifications(chat_id)
-        await query.edit_message_reply_markup(reply_markup=None)
-        await query.answer("Listo, desactivé las notificaciones")
-
 def set_user_url(chat_id, url, original_url):
     """Set a user's search URL"""
     with user_data_lock:
@@ -291,6 +147,10 @@ def toggle_user_notifications(chat_id):
 
 def restart_scraper(chat_id, initialization=False):
     """Restart the scraper for a user"""
+    if is_shutting_down:
+        logger.info(f"Not starting scraper for {chat_id} because system is shutting down")
+        return
+        
     stop_scraper(chat_id)
     
     # Schedule a new scraper task
@@ -314,7 +174,7 @@ def scraper_worker(chat_id, initialization=False):
     if initialization:
         single_scrape_run(chat_id, False, True)  # False for no force_notify, True for summary_only
     
-    while True:
+    while not is_shutting_down:
         try:
             # Check if we should continue running
             with user_data_lock:
@@ -332,12 +192,25 @@ def scraper_worker(chat_id, initialization=False):
             # Sleep between 4-6 minutes before next check
             sleep_time = random.uniform(240, 360)
             logger.info(f"Sleeping for {sleep_time:.1f} seconds before next scrape for {chat_id}")
-            time.sleep(sleep_time)
+            
+            # Sleep in smaller increments so we can check for shutdown signal
+            for _ in range(int(sleep_time / 10)):
+                if is_shutting_down:
+                    logger.info(f"Scraper for {chat_id} received shutdown signal during sleep")
+                    break
+                time.sleep(10)
+                
+            # Sleep the remainder
+            remaining_sleep = sleep_time % 10
+            if remaining_sleep > 0 and not is_shutting_down:
+                time.sleep(remaining_sleep)
             
         except Exception as e:
             logger.error(f"Error in scraper loop for {chat_id}: {e}", exc_info=True)
             # Sleep for 1 minute on error before retrying
             time.sleep(60)
+    
+    logger.info(f"Scraper for {chat_id} exiting due to shutdown signal")
 
 def single_scrape_run(chat_id, force_notify=False, summary_only=False):
     """Perform a single scrape run and notify if new listings found
@@ -347,6 +220,10 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
         force_notify: If True, send notifications regardless of whether ads are new
         summary_only: If True, only send a summary message, not individual ads
     """
+    if is_shutting_down:
+        logger.info(f"Skipping scrape for {chat_id} because system is shutting down")
+        return 0
+        
     logger.info(f"Running scrape for user {chat_id}")
     
     try:
@@ -354,15 +231,15 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
         with user_data_lock:
             if chat_id not in user_data:
                 logger.info(f"User {chat_id} no longer exists, stopping scrape")
-                return
+                return 0
                 
             if not user_data[chat_id].get("url"):
                 logger.info(f"User {chat_id} has no URL configured, stopping scrape")
-                return
+                return 0
                 
             if not force_notify and not user_data[chat_id].get("notifications"):
                 logger.info(f"User {chat_id} has notifications disabled, stopping scrape")
-                return
+                return 0
         
         # Use a fresh browser instance for each scrape
         with SB(uc=True, xvfb=True) as driver:
@@ -423,6 +300,11 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                     user_data[chat_id]["last_seen_links"] = list(new_links)
                     save_users(user_data)
                     return 1  # Count the summary message
+            
+            # Check if we're shutting down
+            if is_shutting_down:
+                logger.info(f"Aborting notification process for {chat_id} due to shutdown")
+                return 0
                 
             # If we have new ads to notify about
             if new_ads or force_notify:
@@ -454,12 +336,21 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                     # Send notifications for each listing
                     sent_count = 0
                     for index, ad in enumerate(notify_ads):
+                        # Check if we're shutting down
+                        if is_shutting_down:
+                            logger.info(f"Stopping notification process for {chat_id} due to shutdown")
+                            break
+                            
                         # Add toggle button to the last message
                         keyboard = None
                         if index == len(notify_ads) - 1:
-                            keyboard = InlineKeyboardMarkup([
-                                [InlineKeyboardButton("Desactivar notificaciones", callback_data=f"toggle_{chat_id}")]
-                            ])
+                            keyboard = {
+                                "inline_keyboard": [
+                                    [
+                                        {"text": "Desactivar notificaciones", "callback_data": f"toggle_{chat_id}"}
+                                    ]
+                                ]
+                            }
                         
                         try:
                             # Use direct HTTP API call to send message
@@ -499,33 +390,289 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
     
     return 0
 
+def handle_message(update):
+    """Handle incoming messages"""
+    chat_id = str(update.get("message", {}).get("chat", {}).get("id"))
+    text = update.get("message", {}).get("text", "").strip()
+    
+    if not chat_id or not text:
+        return
+    
+    logger.info(f"Received message from {chat_id}: {text}")
+    
+    # Initialize user if not exists
+    with user_data_lock:
+        if chat_id not in user_data:
+            if text == "/start":
+                user_data[chat_id] = {
+                    "url": None,
+                    "original_url": None,
+                    "notifications": True,
+                    "last_seen_links": [],
+                    "last_scan": None,
+                    "awaiting_url": False
+                }
+                save_users(user_data)
+                
+                send_telegram_message(
+                    chat_id=chat_id,
+                    text="Hola! Soy un bot para ayudarte a encontrar publicaciones en Zonaprop",
+                    reply_markup=main_menu_keyboard()
+                )
+                send_telegram_message(
+                    chat_id=chat_id,
+                    text="Vos te armás una búsqueda con todas las opciones y filtros que quieras y me pasás el link. "
+                    "Yo me encargo de chequear si hay publicaciones nuevas y te aviso si encuentro algo",
+                    reply_markup=main_menu_keyboard()
+                )
+                send_telegram_message(
+                    chat_id=chat_id,
+                    text="Podés mandarme un link directamente o usar el menú para interactuar conmigo",
+                    reply_markup=main_menu_keyboard()
+                )
+                return
+            else:
+                send_telegram_message(chat_id=chat_id, text="Usá /start para inicializar el bot ;)")
+                return
+    
+    # Check if waiting for URL
+    with user_data_lock:
+        if user_data[chat_id].get("awaiting_url"):
+            user_data[chat_id]["awaiting_url"] = False
+            save_users(user_data)
+            
+            if is_valid_zonaprop_url(text):
+                clean_search_url = clean_url(text)
+                set_user_url(chat_id, clean_search_url, text)
+                send_telegram_message(
+                    chat_id=chat_id,
+                    text=f"Listo, ahora el link de búsqueda es:\n{text}",
+                    reply_markup=main_menu_keyboard(),
+                    disable_web_page_preview=True
+                )
+                
+                # Start scraper if notifications are enabled
+                if user_data[chat_id]["notifications"]:
+                    restart_scraper(chat_id, True)  # True to indicate initialization
+            else:
+                send_telegram_message(
+                    chat_id=chat_id,
+                    text="El link que mandaste no es válido. Fijate que sea un link de Zonaprop. "
+                    "Si pensás que es un error avisale a Jan :P",
+                    reply_markup=main_menu_keyboard()
+                )
+            return
+    
+    # Handle direct URL submission
+    if is_valid_zonaprop_url(text):
+        clean_search_url = clean_url(text)
+        set_user_url(chat_id, clean_search_url, text)
+        send_telegram_message(
+            chat_id=chat_id,
+            text=f"Listo, ahora el link de búsqueda es:\n{text}",
+            reply_markup=main_menu_keyboard(),
+            disable_web_page_preview=True
+        )
+        
+        # Start scraper if notifications are enabled
+        if user_data[chat_id]["notifications"]:
+            restart_scraper(chat_id, True)  # True to indicate initialization
+        return
+    
+    # Handle menu options
+    if text == "Cambiar link de búsqueda":
+        with user_data_lock:
+            user_data[chat_id]["awaiting_url"] = True
+            save_users(user_data)
+        send_telegram_message(chat_id=chat_id, text="Dale, mandame el link de la búsqueda que quieras seguir")
+    
+    elif text == "Activar/Desactivar notificaciones":
+        toggle_user_notifications(chat_id)
+        state_text = "activadas" if user_data[chat_id]["notifications"] else "desactivadas"
+        send_telegram_message(
+            chat_id=chat_id,
+            text=f"Las notificaciones ahora están {state_text}",
+            reply_markup=main_menu_keyboard()
+        )
+        
+        # Start or stop scraper based on notification setting
+        if user_data[chat_id]["notifications"] and user_data[chat_id]["url"]:
+            restart_scraper(chat_id, True)  # True to indicate initialization
+        else:
+            stop_scraper(chat_id)
+    
+    elif text == "Mostrar información":
+        original_url = user_data[chat_id].get("original_url") or "No configurado"
+        url = user_data[chat_id]["url"] or "No configurado"
+        notifications = "Activadas" if user_data[chat_id]["notifications"] else "Desactivadas"
+        last_scan = "Nunca" if not user_data[chat_id].get("last_scan") else user_data[chat_id]["last_scan"]
+        
+        send_telegram_message(
+            chat_id=chat_id,
+            text=f"- Notificaciones: {notifications}\n"
+            f"- Última búsqueda: {last_scan}\n"
+            f"- Link de búsqueda: {original_url}",
+            reply_markup=main_menu_keyboard(),
+            disable_web_page_preview=True
+        )
+    
+    elif text == "Forzar búsqueda ahora":
+        if not user_data[chat_id]["url"]:
+            send_telegram_message(
+                chat_id=chat_id,
+                text="Primero necesito un link de búsqueda. Podés mandarme uno directamente o usar el menú",
+                reply_markup=main_menu_keyboard()
+            )
+            return
+            
+        send_telegram_message(
+            chat_id=chat_id,
+            text="Estoy mirando las publicaciones, dame un segundo...",
+            reply_markup=main_menu_keyboard()
+        )
+        
+        # Force a single scrape run
+        executor.submit(single_scrape_run, chat_id, True, True)  # Second True means force_summary_only
+    
+    elif text.startswith("/"):
+        # Ignore other commands
+        pass
+    
+    else:
+        send_telegram_message(
+            chat_id=chat_id,
+            text="Mmmm, no entendí. Mejor usá el menú para interactuar conmigo",
+            reply_markup=main_menu_keyboard()
+        )
+        send_telegram_message(
+            chat_id=chat_id,
+            text="Soy medio boludo igual así que si tenés algún problema avisale a Jan :)",
+            reply_markup=main_menu_keyboard()
+        )
+
+def handle_callback_query(update):
+    """Handle callback queries from inline buttons"""
+    query_id = update.get("callback_query", {}).get("id")
+    data = update.get("callback_query", {}).get("data")
+    message_id = update.get("callback_query", {}).get("message", {}).get("message_id")
+    chat_id = str(update.get("callback_query", {}).get("message", {}).get("chat", {}).get("id"))
+    
+    if not query_id or not data or not chat_id:
+        return
+    
+    logger.info(f"Received callback query from {chat_id}: {data}")
+    
+    if data.startswith("toggle_"):
+        target_chat_id = data.split("_")[1]
+        toggle_user_notifications(target_chat_id)
+        
+        # Answer the callback query
+        url = f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery"
+        payload = {
+            "callback_query_id": query_id,
+            "text": "Listo, desactivé las notificaciones"
+        }
+        requests.post(url, json=payload)
+        
+        # Edit message to remove keyboard
+        url = f"https://api.telegram.org/bot{TOKEN}/editMessageReplyMarkup"
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "reply_markup": {}
+        }
+        requests.post(url, json=payload)
+
+def get_updates(offset=None):
+    """Get updates from Telegram API"""
+    url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+    params = {
+        "timeout": 30,
+        "allowed_updates": ["message", "callback_query"]
+    }
+    if offset:
+        params["offset"] = offset
+    
+    try:
+        response = requests.get(url, params=params)
+        return response.json()
+    except Exception as e:
+        logger.error(f"Error getting updates: {e}")
+        return {"ok": False}
+
+def shutdown_handler(signum, frame):
+    """Handle shutdown signals properly"""
+    global is_shutting_down
+    is_shutting_down = True
+    logger.info(f"Received shutdown signal {signum}. Starting graceful shutdown...")
+    
+    # Save user data one final time
+    save_users(user_data)
+    
+    # Mark all scrapers for termination
+    for chat_id in list(active_scrapers.keys()):
+        stop_scraper(chat_id)
+    
+    # Shut down the executor
+    executor.shutdown(wait=False)
+    logger.info("ThreadPoolExecutor shutdown initiated")
+    
+    # Give threads a moment to notice the shutdown signal
+    time.sleep(2)
+    
+    # Exit with success code
+    logger.info("Exiting with success code")
+    sys.exit(0)
+
 def main():
     """Main function to start the bot"""
-    # Create the application
-    app = Application.builder().token(TOKEN).build()
-    
-    # Add handlers
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(CallbackQueryHandler(callback_handler))
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, shutdown_handler)   # Ctrl+C
+    signal.signal(signal.SIGTERM, shutdown_handler)  # systemctl stop
     
     # Start scrapers for existing users with notifications enabled
     for chat_id in user_data.keys():
         if user_data[chat_id].get("notifications") and user_data[chat_id].get("url"):
             logger.info(f"Launching scraper thread for {chat_id}")
-            restart_scraper(chat_id)
+            restart_scraper(chat_id, True)  # True for initialization
     
     # Start polling
     logger.info("Bot is running...")
-    app.run_polling()
+    
+    offset = None
+    while not is_shutting_down:
+        try:
+            result = get_updates(offset)
+            
+            if result["ok"]:
+                updates = result.get("result", [])
+                
+                for update in updates:
+                    offset = update["update_id"] + 1
+                    
+                    if "message" in update and "text" in update["message"]:
+                        handle_message(update)
+                    
+                    elif "callback_query" in update:
+                        handle_callback_query(update)
+            
+            else:
+                logger.error(f"Error in getUpdates: {result}")
+                time.sleep(5)
+                
+        except Exception as e:
+            logger.error(f"Error in main loop: {e}", exc_info=True)
+            time.sleep(5)
 
 if __name__ == "__main__":
     try:
-        # Run the bot
         main()
     except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    finally:
-        # Clean up resources
-        executor.shutdown(wait=False)
-        logger.info("Executor shutdown")
+        logger.info("Bot stopped by KeyboardInterrupt")
+        shutdown_handler(signal.SIGINT, None)
+    except SystemExit:
+        # This will be triggered by our shutdown handler
+        pass
+    except Exception as e:
+        logger.error(f"Unhandled exception: {e}", exc_info=True)
+        shutdown_handler(signal.SIGTERM, None)
