@@ -7,7 +7,7 @@ import random
 import threading
 import requests
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 from seleniumbase import SB
@@ -135,8 +135,6 @@ def set_user_url(chat_id, url, original_url):
         user_data[chat_id]["original_url"] = original_url
         user_data[chat_id]["last_seen_links"] = []
         user_data[chat_id]["last_scan"] = None
-        # Reset scan flags when URL changes
-        user_data[chat_id]["initial_scan_done"] = False
         save_users(user_data)
 
 def toggle_user_notifications(chat_id):
@@ -145,18 +143,10 @@ def toggle_user_notifications(chat_id):
         user_data[chat_id]["notifications"] = not user_data[chat_id]["notifications"]
         if not user_data[chat_id]["notifications"]:
             user_data[chat_id]["last_seen_links"] = []
-        # Reset scan flags when toggling notifications
-        user_data[chat_id]["initial_scan_done"] = False
         save_users(user_data)
 
-def restart_scraper(chat_id, initialization=False, initial_delay=0):
-    """Restart the scraper for a user
-    
-    Args:
-        chat_id: The chat ID to start a scraper for
-        initialization: Whether this is the first run
-        initial_delay: Seconds to wait before starting first scan
-    """
+def restart_scraper(chat_id, initialization=False):
+    """Restart the scraper for a user"""
     if is_shutting_down:
         logger.info(f"Not starting scraper for {chat_id} because system is shutting down")
         return
@@ -164,9 +154,8 @@ def restart_scraper(chat_id, initialization=False, initial_delay=0):
     stop_scraper(chat_id)
     
     # Schedule a new scraper task
-    active_scrapers[chat_id] = executor.submit(scraper_worker, chat_id, initialization, initial_delay)
-    logger.info(f"Started new scraper for user {chat_id}" + 
-                (f" with {initial_delay}s initial delay" if initial_delay > 0 else ""))
+    active_scrapers[chat_id] = executor.submit(scraper_worker, chat_id, initialization)
+    logger.info(f"Started new scraper for user {chat_id}")
 
 def stop_scraper(chat_id):
     """Stop the scraper for a user"""
@@ -177,37 +166,14 @@ def stop_scraper(chat_id):
         # Remove from active_scrapers
         active_scrapers.pop(chat_id, None)
 
-def scraper_worker(chat_id, initialization=False, initial_delay=0):
+def scraper_worker(chat_id, initialization=False):
     """Worker function for continuous scraping"""
     logger.info(f"Starting scraper worker for user {chat_id}...")
-    
-    # Apply initial delay if specified 
-    if initial_delay > 0:
-        logger.info(f"Waiting {initial_delay}s before first scan for {chat_id}")
-        
-        # Sleep in smaller increments to check shutdown signal
-        for _ in range(initial_delay // 10):
-            if is_shutting_down:
-                logger.info(f"Scraper for {chat_id} received shutdown signal during initial delay")
-                return
-            time.sleep(10)
-            
-        # Sleep the remainder
-        remaining_sleep = initial_delay % 10
-        if remaining_sleep > 0 and not is_shutting_down:
-            time.sleep(remaining_sleep)
     
     # If this is an initialization run, do one scan without notifications
     if initialization:
         single_scrape_run(chat_id, False, True)  # False for no force_notify, True for summary_only
-        
-        # After initialization scan, sleep a little before entering the main loop
-        if not is_shutting_down:
-            sleep_time = random.uniform(30, 60)  # Sleep 30-60 seconds before starting main loop
-            logger.info(f"Initial scan complete for {chat_id}, sleeping {sleep_time:.1f}s before main loop")
-            time.sleep(sleep_time)
     
-    # Main scraper loop
     while not is_shutting_down:
         try:
             # Check if we should continue running
@@ -274,11 +240,6 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
             if not force_notify and not user_data[chat_id].get("notifications"):
                 logger.info(f"User {chat_id} has notifications disabled, stopping scrape")
                 return 0
-                
-            # Initialize initial_scan_done flag if it doesn't exist
-            if "initial_scan_done" not in user_data[chat_id]:
-                user_data[chat_id]["initial_scan_done"] = False
-                save_users(user_data)
         
         # Use a fresh browser instance for each scrape
         with SB(uc=True, xvfb=True) as driver:
@@ -300,7 +261,7 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
             
             # Find all property listings
             elements = driver.find_elements(By.CSS_SELECTOR, "div.postingCardLayout-module__posting-card-layout")
-
+            
             # Extract links
             new_links = {
                 f"https://www.zonaprop.com.ar{el.get_attribute('data-to-posting')}" 
@@ -322,39 +283,20 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                 # Identify new listings
                 new_ads = new_links - last_seen
                 
-                # Check if this is a true first run or forced summary
-                is_initial_scan = not user_data[chat_id].get("initial_scan_done", False)
-                
-                # Forced summary means summary_only flag is True AND we're forcing a notification
-                is_forced_summary = summary_only and force_notify
-                
-                # Log the decision factors for debugging
-                logger.info(f"Decision factors for {chat_id}: is_initial_scan={is_initial_scan}, is_forced_summary={is_forced_summary}, " +
-                           f"summary_only={summary_only}, force_notify={force_notify}, new_links={len(new_links)}")
-                
-                # Only send a summary if this is the initial scan or a forced summary
-                if is_initial_scan or is_forced_summary:
-                    logger.info(f"Sending summary for {chat_id} (initial scan={is_initial_scan}, forced summary={is_forced_summary})")
+                # If this is the first run or force_notify is True, don't send notifications
+                if not last_seen and not force_notify:
+                    logger.info(f"First run for {chat_id}, saving {len(new_links)} initial listings")
                     
-                    # Send a summary message, with different text depending on number of listings
-                    if len(new_links) > 0:
-                        summary_message = (
-                            f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
-                            f"Voy a empezar a enviarte mensajes cuando aparezcan publicaciones nuevas."
-                        )
-                    else:
-                        summary_message = (
-                            f"No encontré publicaciones que se hayan subido hoy. "
-                            f"Voy a empezar a enviarte mensajes cuando aparezcan publicaciones nuevas."
-                        )
-                    
+                    # Send a summary message
+                    summary_message = (
+                        f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
+                        f"Voy a empezar a enviarte mensajes cuando aparezcan publicaciones nuevas."
+                    )
                     send_telegram_message(
                         chat_id=chat_id,
                         text=summary_message
                     )
                     
-                    # Mark that we've done the initial scan
-                    user_data[chat_id]["initial_scan_done"] = True
                     user_data[chat_id]["last_seen_links"] = list(new_links)
                     save_users(user_data)
                     return 1  # Count the summary message
@@ -364,66 +306,84 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                 logger.info(f"Aborting notification process for {chat_id} due to shutdown")
                 return 0
                 
-            # For regular (non-summary) scans, only send individual notifications for new listings
-            if not summary_only and new_ads:
-                logger.info(f"Sending {len(new_ads)} individual notifications for {chat_id}")
+            # If we have new ads to notify about
+            if new_ads or force_notify:
+                # Notify about new listings or force notification
+                notify_ads = new_ads if not force_notify else new_links
+                logger.info(f"Found {len(notify_ads)} listings to potentially notify about for {chat_id}")
                 
-                # Send notifications for each listing
-                sent_count = 0
-                for index, ad in enumerate(new_ads):
-                    # Check if we're shutting down
-                    if is_shutting_down:
-                        logger.info(f"Stopping notification process for {chat_id} due to shutdown")
-                        break
-                        
-                    # Add toggle button to the last message
-                    keyboard = None
-                    if index == len(new_ads) - 1:
-                        keyboard = {
-                            "inline_keyboard": [
-                                [
-                                    {"text": "Desactivar notificaciones", "callback_data": f"toggle_{chat_id}"}
-                                ]
-                            ]
-                        }
+                # Send either a summary or individual notifications
+                if summary_only:
+                    # Send only a summary message
+                    summary_message = (
+                        f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
+                        f"Voy a empezar a enviarte mensajes cuando aparezcan publicaciones nuevas."
+                    )
+                    send_telegram_message(
+                        chat_id=chat_id,
+                        text=summary_message
+                    )
+                    logger.info(f"Sent summary message to {chat_id} about {len(notify_ads)} listings")
                     
-                    try:
-                        # Use direct HTTP API call to send message
-                        success = send_telegram_message(
-                            chat_id=chat_id,
-                            text=ad,
-                            reply_markup=keyboard,
-                            disable_web_page_preview=False
-                        )
+                    # Update seen listings
+                    with user_data_lock:
+                        if not force_notify:
+                            user_data[chat_id]["last_seen_links"] = list(last_seen.union(new_ads))
+                            save_users(user_data)
+                    
+                    return 1  # Count this as 1 message sent (the summary)
+                else:
+                    # Send notifications for each listing
+                    sent_count = 0
+                    for index, ad in enumerate(notify_ads):
+                        # Check if we're shutting down
+                        if is_shutting_down:
+                            logger.info(f"Stopping notification process for {chat_id} due to shutdown")
+                            break
+                            
+                        # Add toggle button to the last message
+                        keyboard = None
+                        if index == len(notify_ads) - 1:
+                            keyboard = {
+                                "inline_keyboard": [
+                                    [
+                                        {"text": "Desactivar notificaciones", "callback_data": f"toggle_{chat_id}"}
+                                    ]
+                                ]
+                            }
                         
-                        if success:
-                            sent_count += 1
-                        
-                        # Sleep briefly between messages to avoid flood limits
-                        time.sleep(0.5)
-                    except Exception as e:
-                        logger.error(f"Error sending message to {chat_id}: {e}")
-                
-                logger.info(f"Sent {sent_count} individual messages to {chat_id}")
-                
-                # Always update our tracking of seen links
-                with user_data_lock:
-                    user_data[chat_id]["last_seen_links"] = list(last_seen.union(new_ads))
-                    save_users(user_data)
-                
-                return sent_count
+                        try:
+                            # Use direct HTTP API call to send message
+                            success = send_telegram_message(
+                                chat_id=chat_id,
+                                text=ad,
+                                reply_markup=keyboard,
+                                disable_web_page_preview=False
+                            )
+                            
+                            if success:
+                                sent_count += 1
+                            
+                            # Sleep briefly between messages to avoid flood limits
+                            time.sleep(0.5)
+                        except Exception as e:
+                            logger.error(f"Error sending message to {chat_id}: {e}")
+                    
+                    logger.info(f"Sent {sent_count} individual messages to {chat_id}")
+                    
+                    # Update seen listings
+                    with user_data_lock:
+                        if not force_notify:
+                            user_data[chat_id]["last_seen_links"] = list(last_seen.union(new_ads))
+                            save_users(user_data)
+                    
+                    return sent_count
             else:
-                # For regular scans with no new listings, we don't send any notifications
-                # But we still update our tracking
-                logger.info(f"No notifications sent for {chat_id} (summary_only={summary_only}, new_ads={len(new_ads)})")
+                logger.info(f"No new listings for {chat_id}")
                 
-                # Always update our tracking of seen links
+                # Always save scan time
                 with user_data_lock:
-                    if not is_initial_scan and not summary_only:  # Only in regular runs
-                        user_data[chat_id]["last_seen_links"] = list(last_seen.union(new_links))
                     save_users(user_data)
-                
-                return 0
             
     except Exception as e:
         logger.error(f"Error during scrape for {chat_id}: {e}", exc_info=True)
@@ -450,8 +410,7 @@ def handle_message(update):
                     "notifications": True,
                     "last_seen_links": [],
                     "last_scan": None,
-                    "awaiting_url": False,
-                    "initial_scan_done": False
+                    "awaiting_url": False
                 }
                 save_users(user_data)
                 
@@ -546,7 +505,7 @@ def handle_message(update):
         original_url = user_data[chat_id].get("original_url") or "No configurado"
         url = user_data[chat_id]["url"] or "No configurado"
         notifications = "Activadas" if user_data[chat_id]["notifications"] else "Desactivadas"
-        last_scan = "Nunca" if not user_data[chat_id].get("last_scan") else (datetime.strptime(user_data[chat_id]["last_scan"], "%Y-%m-%d %H:%M:%S") - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+        last_scan = "Nunca" if not user_data[chat_id].get("last_scan") else user_data[chat_id]["last_scan"]
         
         send_telegram_message(
             chat_id=chat_id,
@@ -671,17 +630,11 @@ def main():
     signal.signal(signal.SIGINT, shutdown_handler)   # Ctrl+C
     signal.signal(signal.SIGTERM, shutdown_handler)  # systemctl stop
     
-    # Start scrapers for existing users with notifications enabled, with staggered delays
-    enabled_users = [
-        chat_id for chat_id in user_data.keys()
-        if user_data[chat_id].get("notifications") and user_data[chat_id].get("url")
-    ]
-    
-    for i, chat_id in enumerate(enabled_users):
-        # Stagger the starts with 30 second delay between each
-        initial_delay = i * 30
-        logger.info(f"Scheduling scraper for {chat_id} with {initial_delay}s initial delay")
-        restart_scraper(chat_id, True, initial_delay)  # True for initialization, with delay
+    # Start scrapers for existing users with notifications enabled
+    for chat_id in user_data.keys():
+        if user_data[chat_id].get("notifications") and user_data[chat_id].get("url"):
+            logger.info(f"Launching scraper thread for {chat_id}")
+            restart_scraper(chat_id, True)  # True for initialization
     
     # Start polling
     logger.info("Bot is running...")
