@@ -98,35 +98,50 @@ def main_menu_keyboard():
     }
 
 def clean_url(url):
-    """Clean the Zonaprop URL to ensure consistent formatting"""
-    if "/departamentos" in url:
-        # Remove existing sorting and filtering parameters
-        url = url.replace("-publicado-hace-menos-de-2-dias", "")
-        url = url.replace("-publicado-hace-menos-de-1-dia", "")
-        url = url.replace("-publicado-hace-menos-de-1-semana", "")
-        url = url.replace("-publicado-hace-menos-de-15-dias", "")
-        url = url.replace("-publicado-hace-menos-de-1-mes", "")
-        url = url.replace("-publicado-hace-menos-de-45-dias", "")
-        url = url.replace("-orden-precio-ascendente", "")
-        url = url.replace("-orden-precio-descendente", "")
-        url = url.replace("-orden-publicado-descendente", "")
-        url = url.replace("-orden-visitas-descendente", "")
-        url = url.replace("-orden-variacionporcentual-descendente", "")
-        
-        # Add our preferred sorting/filtering
-        split_url = url.split("/departamentos")
-        url = split_url[0] + "/departamentos-publicado-hace-menos-de-1-dia-orden-precio-ascendente" + split_url[1]
+    operations = ["alquiler", "venta", "alquiler-temporal"]
+    
+    filters_to_remove = [
+        "-publicado-hace-menos-de-2-dias",
+        "-publicado-hace-menos-de-1-dia",
+        "-publicado-hace-menos-de-1-semana", 
+        "-publicado-hace-menos-de-15-dias",
+        "-publicado-hace-menos-de-1-mes",
+        "-publicado-hace-menos-de-45-dias",
+        "-orden-precio-ascendente",
+        "-orden-precio-descendente",
+        "-orden-publicado-descendente",
+        "-orden-visitas-descendente",
+        "-orden-variacionporcentual-descendente"
+    ]
+    
+    for filter_param in filters_to_remove:
+        url = url.replace(filter_param, "")
+    
+    preferred_filter = "-publicado-hace-menos-de-1-dia-orden-precio-ascendente"
+    
+    for operation in operations:
+        if f"-{operation}-" in url or f"/{operation}-" in url:
+            parts = []
+            if f"-{operation}-" in url:
+                parts = url.split(f"-{operation}-", 1)
+                url = f"{parts[0]}-{operation}{preferred_filter}-{parts[1]}"
+            elif f"/{operation}-" in url:
+                parts = url.split(f"/{operation}-", 1)
+                url = f"{parts[0]}/{operation}{preferred_filter}-{parts[1]}"
+            break
     
     return url
-
+  
 def is_valid_zonaprop_url(url):
     """Check if URL is a valid Zonaprop URL"""
     valid_prefixes = [
-        "https://www.zonaprop.com.ar/departamentos",
-        "www.zonaprop.com.ar/departamentos",
-        "zonaprop.com.ar/departamentos"
+        "https://www.zonaprop.com.ar/",
+        "www.zonaprop.com.ar/",
+        "zonaprop.com.ar/"
     ]
-    return any(url.startswith(prefix) for prefix in valid_prefixes)
+    
+    contains_emprendimientos = "emprendimientos" in url
+    return any(url.startswith(prefix) for prefix in valid_prefixes) and not contains_emprendimientos
 
 def set_user_url(chat_id, url, original_url):
     """Set a user's search URL"""
