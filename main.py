@@ -914,6 +914,8 @@ def shutdown_handler(signum, frame):
 
 def main():
     """Main function to start the bot"""
+    global is_shutting_down
+
     # Register signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, shutdown_handler)   # Ctrl+C
     signal.signal(signal.SIGTERM, shutdown_handler)  # systemctl stop
@@ -952,7 +954,7 @@ def main():
 
     # Resource monitoring variables
     last_memory_check = time.time()
-    memory_check_interval = 300  # Check every 5 minutes
+    memory_check_interval = 120  # Check every 2 minutes
 
     offset = None
     while not is_shutting_down:
@@ -968,9 +970,42 @@ def main():
 
                     logger.info(f"Resource check - System memory: {memory_percent:.1f}%, Process memory: {process_memory_mb:.1f}MB, Threads: {thread_count}")
 
-                    # Alert on high memory usage
+                    # Alert on high memory usage and trigger reboot if critical
                     if memory_percent > 85:
-                        logger.warning(f"High system memory usage: {memory_percent:.1f}%")
+                        logger.warning(f"High system memory usage: {memory_percent:.1f}% - initiating system reboot")
+
+                        # Trigger graceful shutdown and reboot
+                        logger.info("Triggering graceful shutdown due to high memory usage")
+
+                        # Set shutdown flag to stop all operations
+                        is_shutting_down = True
+
+                        # Save user data one final time
+                        try:
+                            save_users(user_data)
+                            logger.info("User data saved before reboot")
+                        except Exception as e:
+                            logger.error(f"Error saving user data before reboot: {e}")
+
+                        # Stop all scrapers
+                        for chat_id in list(active_scrapers.keys()):
+                            stop_scraper(chat_id)
+
+                        # Shut down the executor
+                        executor.shutdown(wait=False)
+
+                        # Wait a moment for cleanup
+                        time.sleep(2)
+
+                        # Trigger system reboot
+                        logger.critical("Rebooting system due to high memory usage")
+                        try:
+                            import subprocess
+                            subprocess.run(['systemctl', 'reboot'], timeout=10)
+                        except Exception as e:
+                            logger.error(f"Failed to reboot system: {e}")
+                            # If reboot fails, just exit
+                            sys.exit(1)
                     if process_memory_mb > 500:  # Alert if process uses more than 500MB
                         logger.warning(f"High process memory usage: {process_memory_mb:.1f}MB")
                         # Force aggressive cleanup if memory is too high
