@@ -7,8 +7,12 @@ import random
 import threading
 import requests
 import sys
+import psutil
+import gc
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stdout, redirect_stderr
+from io import StringIO
 
 from seleniumbase import SB
 from dotenv import load_dotenv
@@ -20,42 +24,138 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 DATA_FILE = "user_data.json"
 
-# Setup logging
+# Color codes for terminal output
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter with colors and enhanced information"""
+
+    # Color codes
+    COLORS = {
+        'DEBUG': '\033[36m',    # Cyan
+        'INFO': '\033[32m',     # Green
+        'WARNING': '\033[33m',  # Yellow
+        'ERROR': '\033[31m',    # Red
+        'CRITICAL': '\033[35m', # Magenta
+        'RESET': '\033[0m',     # Reset
+        'BOLD': '\033[1m',      # Bold
+        'DIM': '\033[2m'        # Dim
+    }
+
+    def format(self, record):
+        # Get memory usage
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / 1024 / 1024
+
+        # Get thread count
+        thread_count = threading.active_count()
+
+        # Format timestamp
+        timestamp = datetime.fromtimestamp(record.created).strftime('%H:%M:%S.%f')[:-3]
+
+        # Color the level name
+        level_color = self.COLORS.get(record.levelname, '')
+        reset = self.COLORS['RESET']
+        bold = self.COLORS['BOLD']
+        dim = self.COLORS['DIM']
+
+        # Enhanced format with memory and thread info
+        formatted = (
+            f"{dim}[{timestamp}]{reset} "
+            f"{level_color}{bold}[{record.levelname:8}]{reset} "
+            f"{dim}[MEM:{memory_mb:6.1f}MB T:{thread_count:2d}]{reset} "
+            f"{record.getMessage()}"
+        )
+
+        # Add extra info for errors
+        if record.levelname in ['ERROR', 'CRITICAL'] and record.exc_info:
+            formatted += f"\n{dim}Exception Details:{reset}\n{self.formatException(record.exc_info)}"
+
+        return formatted
+
+# Setup enhanced logging
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(ColoredFormatter())
+
+file_formatter = logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - [MEM:%(process)d MB T:%(thread)d] - %(message)s'
+)
+file_handler = logging.FileHandler("bot.log")
+file_handler.setFormatter(file_formatter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("bot.log"),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, console_handler]
 )
+
+# Suppress noisy loggers
 logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.ERROR)
+logging.getLogger("seleniumbase").setLevel(logging.WARNING)
+logging.getLogger("uc").setLevel(logging.WARNING)
+logging.getLogger("selenium").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
+
+# Add memory monitoring function
+def log_memory_usage(operation=""):
+    """Log current memory usage"""
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    memory_mb = memory_info.rss / 1024 / 1024
+    memory_percent = process.memory_percent()
+
+    logger.info(f"Memory usage {operation}: {memory_mb:.1f} MB ({memory_percent:.1f}% of system)")
 
 # Flag to indicate the bot is shutting down
 is_shutting_down = False
 
-def send_telegram_message(chat_id, text, reply_markup=None, disable_web_page_preview=False):
-    """Send a message to Telegram using direct HTTP API calls instead of the Bot object"""
+def send_telegram_message(chat_id, text, reply_markup=None, disable_web_page_preview=False, retry_count=3):
+    """Send a message to Telegram using direct HTTP API calls with comprehensive error handling"""
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    
+
     payload = {
         "chat_id": chat_id,
         "text": text,
         "disable_web_page_preview": disable_web_page_preview
     }
-    
+
     # Add reply_markup if provided
     if reply_markup:
         payload["reply_markup"] = reply_markup
-    
-    try:
-        response = requests.post(url, json=payload)
-        return response.status_code == 200
-    except Exception as e:
-        logger.error(f"Error sending Telegram message: {e}")
-        return False
+
+    for attempt in range(retry_count):
+        try:
+            start_time = time.time()
+            response = requests.post(url, json=payload, timeout=30)
+            response_time = time.time() - start_time
+
+            if response.status_code == 200:
+                if response_time > 5:
+                    logger.warning(f"Slow Telegram API response: {response_time:.2f}s")
+                return True
+            elif response.status_code == 429:  # Rate limited
+                retry_after = int(response.headers.get('Retry-After', 60))
+                logger.warning(f"Rate limited by Telegram API, waiting {retry_after}s")
+                time.sleep(retry_after)
+                continue
+            else:
+                logger.error(f"Telegram API error {response.status_code}: {response.text}")
+
+        except requests.exceptions.Timeout:
+            logger.error(f"Telegram API timeout on attempt {attempt + 1}/{retry_count}")
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Telegram API connection error on attempt {attempt + 1}/{retry_count}: {e}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Telegram API request error on attempt {attempt + 1}/{retry_count}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error sending Telegram message on attempt {attempt + 1}/{retry_count}: {e}")
+
+        if attempt < retry_count - 1:
+            wait_time = 2 ** attempt  # Exponential backoff
+            logger.info(f"Retrying Telegram message in {wait_time}s...")
+            time.sleep(wait_time)
+
+    logger.error(f"Failed to send Telegram message after {retry_count} attempts")
+    return False
 
 # Global executor for managing scraper threads
 executor = ThreadPoolExecutor(max_workers=5)
@@ -117,7 +217,7 @@ def clean_url(url):
     for filter_param in filters_to_remove:
         url = url.replace(filter_param, "")
     
-    preferred_filter = "-publicado-hace-menos-de-1-dia-orden-precio-ascendente"
+    preferred_filter = "-publicado-hace-menos-de-1-dia-orden-publicado-descendente"
     
     for operation in operations:
         if f"-{operation}-" in url or f"/{operation}-" in url:
@@ -192,21 +292,29 @@ def scraper_worker(chat_id, initialization=False):
     # If this is an initialization run, do one scan without notifications
     if initialization:
         single_scrape_run(chat_id, False, True)  # False for no force_notify, True for summary_only
-    
+        # After initialization, go directly to sleep to avoid double scrape
+        first_run = True
+    else:
+        first_run = False
+
     while not is_shutting_down:
         try:
             # Check if we should continue running
             with user_data_lock:
                 if (
-                    chat_id not in user_data or 
-                    not user_data[chat_id].get("notifications") or 
+                    chat_id not in user_data or
+                    not user_data[chat_id].get("notifications") or
                     not user_data[chat_id].get("url")
                 ):
                     logger.info(f"Stopping scraper for {chat_id} (notifications disabled or URL missing)")
                     break
-            
-            # Run a single scrape
-            single_scrape_run(chat_id)
+
+            # Skip the first scrape if we just did initialization
+            if not first_run:
+                # Run a single scrape
+                single_scrape_run(chat_id)
+            else:
+                first_run = False
             
             # Sleep between 4-6 minutes before next check
             sleep_time = random.uniform(240, 360)
@@ -233,7 +341,7 @@ def scraper_worker(chat_id, initialization=False):
 
 def single_scrape_run(chat_id, force_notify=False, summary_only=False):
     """Perform a single scrape run and notify if new listings found
-    
+
     Args:
         chat_id: The chat ID to send notifications to
         force_notify: If True, send notifications regardless of whether ads are new
@@ -242,8 +350,25 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
     if is_shutting_down:
         logger.info(f"Skipping scrape for {chat_id} because system is shutting down")
         return 0
-        
+
     logger.info(f"Running scrape for user {chat_id}")
+    log_memory_usage("before scrape")
+
+    # Set X11 environment variables for GUI automation
+    os.environ['DISPLAY'] = ':0'
+    # Try to find the correct XAUTHORITY file
+    if 'XAUTHORITY' not in os.environ:
+        # Check for standard location first
+        xauth_home = os.path.expanduser('~/.Xauthority')
+        if os.path.exists(xauth_home):
+            os.environ['XAUTHORITY'] = xauth_home
+        else:
+            # Check for Wayland/XWayland authority file
+            import glob
+            xauth_pattern = f"/run/user/{os.getuid()}/.mutter-Xwaylandauth.*"
+            xauth_files = glob.glob(xauth_pattern)
+            if xauth_files:
+                os.environ['XAUTHORITY'] = xauth_files[0]
     
     try:
         # Ensure the user still exists and has notifications enabled
@@ -263,18 +388,62 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
             # Get initialization status
             is_initialized = user_data[chat_id].get("initialized", False)
         
-        # Use a fresh browser instance for each scrape
-        with SB(uc=True, xvfb=True) as driver:
+        # Use a fresh browser instance for each scrape (suppress noisy startup messages)
+        logger.info(f"Creating browser instance for {chat_id}")
+        log_memory_usage("before browser creation")
+
+        startup_output = StringIO()
+        with redirect_stdout(startup_output), redirect_stderr(startup_output):
+            try:
+                driver_context = SB(uc=True, xvfb=False)
+                driver = driver_context.__enter__()
+                logger.info(f"Browser created successfully for {chat_id}")
+                log_memory_usage("after browser creation")
+            except Exception as e:
+                logger.error(f"Failed to create browser for {chat_id}: {e}")
+                gc.collect()  # Force garbage collection on error
+                return 0
+
+        try:
             url = user_data[chat_id]["url"]
             logger.info(f"Scraping URL for {chat_id}: {url}")
             
             # Open URL with retry logic
+            logger.info(f"Opening URL for {chat_id}")
             driver.uc_open_with_reconnect(url, 4)
-            
-            # Handle potential CAPTCHA
-            driver.uc_gui_click_captcha()
+            logger.info(f"URL opened successfully for {chat_id}")
+
+            # Handle potential CAPTCHA with timeout
+            logger.info(f"Checking for CAPTCHA for {chat_id}")
+            try:
+                import threading
+                import time
+
+                def captcha_task():
+                    try:
+                        driver.uc_gui_click_captcha()
+                        return True
+                    except Exception as e:
+                        logger.warning(f"CAPTCHA handling failed for {chat_id}: {e}")
+                        return False
+
+                # Use threading with timeout instead of signal (which doesn't work in threads)
+                captcha_thread = threading.Thread(target=captcha_task)
+                captcha_thread.daemon = True
+                captcha_thread.start()
+                captcha_thread.join(timeout=30)  # 30-second timeout
+
+                if captcha_thread.is_alive():
+                    logger.warning(f"CAPTCHA handling timed out for {chat_id}, continuing anyway")
+                else:
+                    logger.info(f"CAPTCHA handling completed for {chat_id}")
+
+            except Exception as e:
+                logger.warning(f"CAPTCHA handling failed for {chat_id}: {e}, continuing anyway")
+
             driver.sleep(1)
-            
+            logger.info(f"Starting element extraction for {chat_id}")
+
             # Remove suggested listings to avoid confusion
             driver.execute_script("""
                 const suggested = document.querySelector("div.thin-postings-container");
@@ -282,16 +451,20 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
             """)
             
             # Find all property listings
+            logger.info(f"Looking for property listings for {chat_id}")
             elements = driver.find_elements(By.CSS_SELECTOR, "div.postingCardLayout-module__posting-card-layout")
-            
+            logger.info(f"Found {len(elements)} elements for {chat_id}")
+
             # Extract links
+            logger.info(f"Extracting links from elements for {chat_id}")
             new_links = {
-                f"https://www.zonaprop.com.ar{el.get_attribute('data-to-posting')}" 
-                for el in elements 
+                f"https://www.zonaprop.com.ar{el.get_attribute('data-to-posting')}"
+                for el in elements
                 if el.get_attribute("data-to-posting")
             }
-            
+
             logger.info(f"Found {len(new_links)} listings for {chat_id}")
+            logger.info(f"Processing listings data for {chat_id}")
             
             # Update last scan time
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -421,10 +594,62 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                 # Always save scan time
                 with user_data_lock:
                     save_users(user_data)
-            
+
+        except Exception as e:
+            logger.error(f"Error during scrape for {chat_id}: {e}", exc_info=True)
+        finally:
+            # Comprehensive browser cleanup
+            logger.info(f"Cleaning up browser for {chat_id}")
+            try:
+                # Close all windows and tabs
+                if 'driver' in locals():
+                    try:
+                        # Close all windows
+                        for handle in driver.window_handles:
+                            driver.switch_to.window(handle)
+                            driver.close()
+                    except:
+                        pass
+
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+
+                # Close driver context
+                driver_context.__exit__(None, None, None)
+
+                # Kill any remaining Chrome processes
+                try:
+                    import subprocess
+                    # Kill Chrome processes that might be hanging around
+                    subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=5)
+                    subprocess.run(['pkill', '-f', 'chromium'], capture_output=True, timeout=5)
+                except:
+                    pass
+
+                # Force multiple garbage collections
+                for _ in range(3):
+                    gc.collect()
+
+                # Small delay to allow cleanup
+                time.sleep(0.5)
+
+                log_memory_usage("after browser cleanup")
+                logger.info(f"Browser cleanup completed for {chat_id}")
+
+            except Exception as cleanup_error:
+                logger.warning(f"Error during browser cleanup for {chat_id}: {cleanup_error}")
+                # Force garbage collection even if cleanup fails
+                for _ in range(3):
+                    gc.collect()
+
     except Exception as e:
         logger.error(f"Error during scrape for {chat_id}: {e}", exc_info=True)
-    
+        # Force garbage collection on any error
+        gc.collect()
+
+    log_memory_usage("end of scrape")
     return 0
 
 def handle_message(update):
@@ -621,8 +846,8 @@ def handle_callback_query(update):
         }
         requests.post(url, json=payload)
 
-def get_updates(offset=None):
-    """Get updates from Telegram API"""
+def get_updates(offset=None, retry_count=3):
+    """Get updates from Telegram API with comprehensive error handling"""
     url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
     params = {
         "timeout": 30,
@@ -630,13 +855,38 @@ def get_updates(offset=None):
     }
     if offset:
         params["offset"] = offset
-    
-    try:
-        response = requests.get(url, params=params)
-        return response.json()
-    except Exception as e:
-        logger.error(f"Error getting updates: {e}")
-        return {"ok": False}
+
+    for attempt in range(retry_count):
+        try:
+            start_time = time.time()
+            response = requests.get(url, params=params, timeout=35)  # Slightly longer than API timeout
+            response_time = time.time() - start_time
+
+            if response.status_code == 200:
+                if response_time > 32:  # Long polling should take ~30s
+                    logger.warning(f"Slow getUpdates response: {response_time:.2f}s")
+                return response.json()
+            else:
+                logger.error(f"getUpdates API error {response.status_code}: {response.text}")
+
+        except requests.exceptions.Timeout:
+            logger.warning(f"getUpdates timeout on attempt {attempt + 1}/{retry_count} (normal for long polling)")
+            if attempt == retry_count - 1:
+                return {"ok": False, "error": "timeout"}
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"getUpdates connection error on attempt {attempt + 1}/{retry_count}: {e}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"getUpdates request error on attempt {attempt + 1}/{retry_count}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error getting updates on attempt {attempt + 1}/{retry_count}: {e}")
+
+        if attempt < retry_count - 1:
+            wait_time = min(2 ** attempt, 10)  # Max 10s wait
+            logger.info(f"Retrying getUpdates in {wait_time}s...")
+            time.sleep(wait_time)
+
+    logger.error(f"Failed to get updates after {retry_count} attempts")
+    return {"ok": False, "error": "max_retries_exceeded"}
 
 def shutdown_handler(signum, frame):
     """Handle shutdown signals properly"""
@@ -667,37 +917,106 @@ def main():
     # Register signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, shutdown_handler)   # Ctrl+C
     signal.signal(signal.SIGTERM, shutdown_handler)  # systemctl stop
-    
+
+    # Log initial system state
+    logger.info("=" * 60)
+    logger.info("Starting ZonaProp Bot")
+    logger.info("=" * 60)
+    log_memory_usage("startup")
+
+    # System resource check
+    try:
+        memory_percent = psutil.virtual_memory().percent
+        disk_percent = psutil.disk_usage('/').percent
+        cpu_percent = psutil.cpu_percent(interval=1)
+
+        logger.info(f"System resources - Memory: {memory_percent:.1f}%, Disk: {disk_percent:.1f}%, CPU: {cpu_percent:.1f}%")
+
+        if memory_percent > 80:
+            logger.warning(f"High memory usage detected: {memory_percent:.1f}%")
+        if disk_percent > 90:
+            logger.warning(f"High disk usage detected: {disk_percent:.1f}%")
+
+    except Exception as e:
+        logger.warning(f"Could not check system resources: {e}")
+
     # Start scrapers for existing users with notifications enabled
     for chat_id in user_data.keys():
         if user_data[chat_id].get("notifications") and user_data[chat_id].get("url"):
             logger.info(f"Launching scraper thread for {chat_id}")
             restart_scraper(chat_id, True)  # True for initialization
-    
+
     # Start polling
-    logger.info("Bot is running...")
-    
+    logger.info("Bot is running and ready for messages...")
+    log_memory_usage("after startup")
+
+    # Resource monitoring variables
+    last_memory_check = time.time()
+    memory_check_interval = 300  # Check every 5 minutes
+
     offset = None
     while not is_shutting_down:
         try:
+            # Periodic resource monitoring
+            current_time = time.time()
+            if current_time - last_memory_check > memory_check_interval:
+                try:
+                    process = psutil.Process()
+                    memory_percent = psutil.virtual_memory().percent
+                    process_memory_mb = process.memory_info().rss / 1024 / 1024
+                    thread_count = threading.active_count()
+
+                    logger.info(f"Resource check - System memory: {memory_percent:.1f}%, Process memory: {process_memory_mb:.1f}MB, Threads: {thread_count}")
+
+                    # Alert on high memory usage
+                    if memory_percent > 85:
+                        logger.warning(f"High system memory usage: {memory_percent:.1f}%")
+                    if process_memory_mb > 500:  # Alert if process uses more than 500MB
+                        logger.warning(f"High process memory usage: {process_memory_mb:.1f}MB")
+                        # Force aggressive cleanup if memory is too high
+                        logger.info("Forcing aggressive garbage collection due to high memory usage")
+                        for _ in range(5):
+                            gc.collect()
+
+                        # Kill any stray browser processes
+                        try:
+                            import subprocess
+                            subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=3)
+                            subprocess.run(['pkill', '-f', 'chromium'], capture_output=True, timeout=3)
+                        except:
+                            pass
+                    if thread_count > 20:  # Alert if too many threads
+                        logger.warning(f"High thread count: {thread_count}")
+
+                    last_memory_check = current_time
+
+                except Exception as e:
+                    logger.warning(f"Error during resource check: {e}")
+
             result = get_updates(offset)
-            
+
             if result["ok"]:
                 updates = result.get("result", [])
-                
+
                 for update in updates:
                     offset = update["update_id"] + 1
-                    
+
                     if "message" in update and "text" in update["message"]:
                         handle_message(update)
-                    
+
                     elif "callback_query" in update:
                         handle_callback_query(update)
-            
+
             else:
-                logger.error(f"Error in getUpdates: {result}")
-                time.sleep(5)
-                
+                error_msg = result.get("error", "unknown_error")
+                logger.error(f"Error in getUpdates: {error_msg}")
+                # Longer sleep for persistent errors
+                if error_msg == "max_retries_exceeded":
+                    logger.warning("Max retries exceeded, sleeping longer...")
+                    time.sleep(30)
+                else:
+                    time.sleep(5)
+
         except Exception as e:
             logger.error(f"Error in main loop: {e}", exc_info=True)
             time.sleep(5)
