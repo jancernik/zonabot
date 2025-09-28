@@ -424,7 +424,11 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                         driver.uc_gui_click_captcha()
                         return True
                     except Exception as e:
-                        logger.warning(f"CAPTCHA handling failed for {chat_id}: {e}")
+                        # Reduce noise for common X11 authorization issues
+                        if "Authorization required" in str(e) or "Can't connect to display" in str(e):
+                            logger.debug(f"CAPTCHA GUI unavailable for {chat_id} (X11 issue): {e}")
+                        else:
+                            logger.warning(f"CAPTCHA handling failed for {chat_id}: {e}")
                         return False
 
                 # Use threading with timeout instead of signal (which doesn't work in threads)
@@ -439,7 +443,11 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                     logger.info(f"CAPTCHA handling completed for {chat_id}")
 
             except Exception as e:
-                logger.warning(f"CAPTCHA handling failed for {chat_id}: {e}, continuing anyway")
+                # Reduce noise for common X11 authorization issues
+                if "Authorization required" in str(e) or "Can't connect to display" in str(e):
+                    logger.debug(f"CAPTCHA GUI unavailable for {chat_id} (X11 issue), continuing anyway")
+                else:
+                    logger.warning(f"CAPTCHA handling failed for {chat_id}: {e}, continuing anyway")
 
             driver.sleep(1)
             logger.info(f"Starting element extraction for {chat_id}")
@@ -490,10 +498,16 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                             f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
                         )
                     else:
-                        summary_message = (
-                            f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
-                            f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
-                        )
+                        if len(new_links) == 1:
+                            summary_message = (
+                                f"Encontré 1 publicación que se subió hoy. "
+                                f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
+                            )
+                        else:
+                            summary_message = (
+                                f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
+                                f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
+                            )
                     send_telegram_message(
                         chat_id=chat_id,
                         text=summary_message
@@ -525,10 +539,16 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                             f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
                         )
                     else:
-                        summary_message = (
-                            f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
-                            f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
-                        )
+                        if len(new_links) == 1:
+                            summary_message = (
+                                f"Encontré 1 publicación que se subió hoy. "
+                                f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
+                            )
+                        else:
+                            summary_message = (
+                                f"Encontré {len(new_links)} publicaciones que se subieron hoy. "
+                                f"Voy a enviarte mensajes cuando aparezcan publicaciones nuevas."
+                            )
                     send_telegram_message(
                         chat_id=chat_id,
                         text=summary_message
@@ -925,6 +945,18 @@ def main():
     logger.info("Starting ZonaProp Bot")
     logger.info("=" * 60)
     log_memory_usage("startup")
+
+    # Setup X11 authorization for GUI automation
+    try:
+        import subprocess
+        result = subprocess.run(['xhost', '+si:localuser:jan'],
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            logger.info("X11 authorization configured successfully")
+        else:
+            logger.warning(f"X11 authorization setup failed: {result.stderr}")
+    except Exception as e:
+        logger.warning(f"Could not configure X11 authorization: {e}")
 
     # System resource check
     try:
