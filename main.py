@@ -788,7 +788,7 @@ def handle_message(update):
         original_url = user_data[chat_id].get("original_url") or "No configurado"
         url = user_data[chat_id]["url"] or "No configurado"
         notifications = "Activadas" if user_data[chat_id]["notifications"] else "Desactivadas"
-        last_scan = "Nunca" if not user_data[chat_id].get("last_scan") else (datetime.strptime(user_data[chat_id]["last_scan"], "%Y-%m-%d %H:%M:%S") - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+        last_scan = "Nunca" if not user_data[chat_id].get("last_scan") else user_data[chat_id]["last_scan"]
         
         send_telegram_message(
             chat_id=chat_id,
