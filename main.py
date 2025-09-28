@@ -198,7 +198,7 @@ def main_menu_keyboard():
     }
 
 def clean_url(url):
-    operations = ["alquiler", "venta", "alquiler-temporal"]
+    operations = ["alquiler", "temporal", "venta", "alquiler-temporal"]
     
     filters_to_remove = [
         "-publicado-hace-menos-de-2-dias",
