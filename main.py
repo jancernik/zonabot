@@ -19,16 +19,13 @@ from dotenv import load_dotenv
 from selenium.webdriver.common.by import By
 import telegram
 
-# Load environment variables
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 DATA_FILE = "user_data.json"
 
-# Color codes for terminal output
 class ColoredFormatter(logging.Formatter):
     """Custom formatter with colors and enhanced information"""
 
-    # Color codes
     COLORS = {
         'DEBUG': '\033[36m',    # Cyan
         'INFO': '\033[32m',     # Green
@@ -41,23 +38,18 @@ class ColoredFormatter(logging.Formatter):
     }
 
     def format(self, record):
-        # Get memory usage
         process = psutil.Process()
         memory_mb = process.memory_info().rss / 1024 / 1024
 
-        # Get thread count
         thread_count = threading.active_count()
 
-        # Format timestamp
         timestamp = datetime.fromtimestamp(record.created).strftime('%H:%M:%S.%f')[:-3]
 
-        # Color the level name
         level_color = self.COLORS.get(record.levelname, '')
         reset = self.COLORS['RESET']
         bold = self.COLORS['BOLD']
         dim = self.COLORS['DIM']
 
-        # Enhanced format with memory and thread info
         formatted = (
             f"{dim}[{timestamp}]{reset} "
             f"{level_color}{bold}[{record.levelname:8}]{reset} "
@@ -65,13 +57,11 @@ class ColoredFormatter(logging.Formatter):
             f"{record.getMessage()}"
         )
 
-        # Add extra info for errors
         if record.levelname in ['ERROR', 'CRITICAL'] and record.exc_info:
             formatted += f"\n{dim}Exception Details:{reset}\n{self.formatException(record.exc_info)}"
 
         return formatted
 
-# Setup enhanced logging
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(ColoredFormatter())
 
@@ -86,7 +76,6 @@ logging.basicConfig(
     handlers=[file_handler, console_handler]
 )
 
-# Suppress noisy loggers
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.ERROR)
 logging.getLogger("seleniumbase").setLevel(logging.WARNING)
@@ -95,7 +84,6 @@ logging.getLogger("selenium").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-# Add memory monitoring function
 def log_memory_usage(operation=""):
     """Log current memory usage"""
     process = psutil.Process()
@@ -105,7 +93,6 @@ def log_memory_usage(operation=""):
 
     logger.info(f"Memory usage {operation}: {memory_mb:.1f} MB ({memory_percent:.1f}% of system)")
 
-# Flag to indicate the bot is shutting down
 is_shutting_down = False
 
 def send_telegram_message(chat_id, text, reply_markup=None, disable_web_page_preview=False, retry_count=3):
@@ -118,7 +105,6 @@ def send_telegram_message(chat_id, text, reply_markup=None, disable_web_page_pre
         "disable_web_page_preview": disable_web_page_preview
     }
 
-    # Add reply_markup if provided
     if reply_markup:
         payload["reply_markup"] = reply_markup
 
@@ -132,7 +118,7 @@ def send_telegram_message(chat_id, text, reply_markup=None, disable_web_page_pre
                 if response_time > 5:
                     logger.warning(f"Slow Telegram API response: {response_time:.2f}s")
                 return True
-            elif response.status_code == 429:  # Rate limited
+            elif response.status_code == 429:
                 retry_after = int(response.headers.get('Retry-After', 60))
                 logger.warning(f"Rate limited by Telegram API, waiting {retry_after}s")
                 time.sleep(retry_after)
@@ -150,18 +136,15 @@ def send_telegram_message(chat_id, text, reply_markup=None, disable_web_page_pre
             logger.error(f"Unexpected error sending Telegram message on attempt {attempt + 1}/{retry_count}: {e}")
 
         if attempt < retry_count - 1:
-            wait_time = 2 ** attempt  # Exponential backoff
+            wait_time = 2 ** attempt
             logger.info(f"Retrying Telegram message in {wait_time}s...")
             time.sleep(wait_time)
 
     logger.error(f"Failed to send Telegram message after {retry_count} attempts")
     return False
 
-# Global executor for managing scraper threads
 executor = ThreadPoolExecutor(max_workers=5)
-# Store active scraper tasks by chat_id
 active_scrapers = {}
-# Lock for thread-safe operations on user_data
 user_data_lock = threading.RLock()
 
 def load_users():
@@ -182,7 +165,6 @@ def save_users(users):
         except Exception as e:
             logger.error(f"Error saving user data: {e}")
 
-# Load initial user data
 user_data = load_users()
 
 def main_menu_keyboard():
@@ -250,7 +232,7 @@ def set_user_url(chat_id, url, original_url):
         user_data[chat_id]["original_url"] = original_url
         user_data[chat_id]["last_seen_links"] = []
         user_data[chat_id]["last_scan"] = None
-        user_data[chat_id]["initialized"] = False  # Reset initialization status
+        user_data[chat_id]["initialized"] = False
         save_users(user_data)
 
 def toggle_user_notifications(chat_id):
@@ -260,7 +242,6 @@ def toggle_user_notifications(chat_id):
         if not user_data[chat_id]["notifications"]:
             user_data[chat_id]["last_seen_links"] = []
         else:
-            # If turning ON notifications, we should reset the initialization
             user_data[chat_id]["initialized"] = False
         save_users(user_data)
 
@@ -272,34 +253,27 @@ def restart_scraper(chat_id, initialization=False):
         
     stop_scraper(chat_id)
     
-    # Schedule a new scraper task
     active_scrapers[chat_id] = executor.submit(scraper_worker, chat_id, initialization)
     logger.info(f"Started new scraper for user {chat_id}")
 
 def stop_scraper(chat_id):
     """Stop the scraper for a user"""
     if chat_id in active_scrapers:
-        # Note: This doesn't actually interrupt the thread, but marks it for cleanup
-        # The thread will terminate when it checks user_data["notifications"]
         logger.info(f"Marked scraper for termination for user {chat_id}")
-        # Remove from active_scrapers
         active_scrapers.pop(chat_id, None)
 
 def scraper_worker(chat_id, initialization=False):
     """Worker function for continuous scraping"""
     logger.info(f"Starting scraper worker for user {chat_id}...")
     
-    # If this is an initialization run, do one scan without notifications
     if initialization:
-        single_scrape_run(chat_id, False, True)  # False for no force_notify, True for summary_only
-        # After initialization, go directly to sleep to avoid double scrape
+        single_scrape_run(chat_id, False, True)
         first_run = True
     else:
         first_run = False
 
     while not is_shutting_down:
         try:
-            # Check if we should continue running
             with user_data_lock:
                 if (
                     chat_id not in user_data or
@@ -309,32 +283,26 @@ def scraper_worker(chat_id, initialization=False):
                     logger.info(f"Stopping scraper for {chat_id} (notifications disabled or URL missing)")
                     break
 
-            # Skip the first scrape if we just did initialization
             if not first_run:
-                # Run a single scrape
                 single_scrape_run(chat_id)
             else:
                 first_run = False
             
-            # Sleep between 4-6 minutes before next check
             sleep_time = random.uniform(240, 360)
             logger.info(f"Sleeping for {sleep_time:.1f} seconds before next scrape for {chat_id}")
             
-            # Sleep in smaller increments so we can check for shutdown signal
             for _ in range(int(sleep_time / 10)):
                 if is_shutting_down:
                     logger.info(f"Scraper for {chat_id} received shutdown signal during sleep")
                     break
                 time.sleep(10)
                 
-            # Sleep the remainder
             remaining_sleep = sleep_time % 10
             if remaining_sleep > 0 and not is_shutting_down:
                 time.sleep(remaining_sleep)
             
         except Exception as e:
             logger.error(f"Error in scraper loop for {chat_id}: {e}", exc_info=True)
-            # Sleep for 1 minute on error before retrying
             time.sleep(60)
     
     logger.info(f"Scraper for {chat_id} exiting due to shutdown signal")
@@ -354,16 +322,12 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
     logger.info(f"Running scrape for user {chat_id}")
     log_memory_usage("before scrape")
 
-    # Set X11 environment variables for GUI automation
     os.environ['DISPLAY'] = ':0'
-    # Try to find the correct XAUTHORITY file
     if 'XAUTHORITY' not in os.environ:
-        # Check for standard location first
         xauth_home = os.path.expanduser('~/.Xauthority')
         if os.path.exists(xauth_home):
             os.environ['XAUTHORITY'] = xauth_home
         else:
-            # Check for Wayland/XWayland authority file
             import glob
             xauth_pattern = f"/run/user/{os.getuid()}/.mutter-Xwaylandauth.*"
             xauth_files = glob.glob(xauth_pattern)
@@ -371,7 +335,6 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                 os.environ['XAUTHORITY'] = xauth_files[0]
     
     try:
-        # Ensure the user still exists and has notifications enabled
         with user_data_lock:
             if chat_id not in user_data:
                 logger.info(f"User {chat_id} no longer exists, stopping scrape")
@@ -385,10 +348,8 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                 logger.info(f"User {chat_id} has notifications disabled, stopping scrape")
                 return 0
                 
-            # Get initialization status
             is_initialized = user_data[chat_id].get("initialized", False)
         
-        # Use a fresh browser instance for each scrape (suppress noisy startup messages)
         logger.info(f"Creating browser instance for {chat_id}")
         log_memory_usage("before browser creation")
 
@@ -401,19 +362,17 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                 log_memory_usage("after browser creation")
             except Exception as e:
                 logger.error(f"Failed to create browser for {chat_id}: {e}")
-                gc.collect()  # Force garbage collection on error
+                gc.collect()
                 return 0
 
         try:
             url = user_data[chat_id]["url"]
             logger.info(f"Scraping URL for {chat_id}: {url}")
             
-            # Open URL with retry logic
             logger.info(f"Opening URL for {chat_id}")
             driver.uc_open_with_reconnect(url, 4)
             logger.info(f"URL opened successfully for {chat_id}")
 
-            # Handle potential CAPTCHA with timeout
             logger.info(f"Checking for CAPTCHA for {chat_id}")
             try:
                 import threading
@@ -424,18 +383,16 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                         driver.uc_gui_click_captcha()
                         return True
                     except Exception as e:
-                        # Reduce noise for common X11 authorization issues
                         if "Authorization required" in str(e) or "Can't connect to display" in str(e):
                             logger.debug(f"CAPTCHA GUI unavailable for {chat_id} (X11 issue): {e}")
                         else:
                             logger.warning(f"CAPTCHA handling failed for {chat_id}: {e}")
                         return False
 
-                # Use threading with timeout instead of signal (which doesn't work in threads)
                 captcha_thread = threading.Thread(target=captcha_task)
                 captcha_thread.daemon = True
                 captcha_thread.start()
-                captcha_thread.join(timeout=30)  # 30-second timeout
+                captcha_thread.join(timeout=30)
 
                 if captcha_thread.is_alive():
                     logger.warning(f"CAPTCHA handling timed out for {chat_id}, continuing anyway")
@@ -443,7 +400,6 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                     logger.info(f"CAPTCHA handling completed for {chat_id}")
 
             except Exception as e:
-                # Reduce noise for common X11 authorization issues
                 if "Authorization required" in str(e) or "Can't connect to display" in str(e):
                     logger.debug(f"CAPTCHA GUI unavailable for {chat_id} (X11 issue), continuing anyway")
                 else:
@@ -452,18 +408,15 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
             driver.sleep(1)
             logger.info(f"Starting element extraction for {chat_id}")
 
-            # Remove suggested listings to avoid confusion
             driver.execute_script("""
                 const suggested = document.querySelector("div.thin-postings-container");
                 suggested && suggested.parentNode && suggested.parentNode.removeChild(suggested);
             """)
             
-            # Find all property listings
             logger.info(f"Looking for property listings for {chat_id}")
             elements = driver.find_elements(By.CSS_SELECTOR, "div.postingCardLayout-module__posting-card-layout")
             logger.info(f"Found {len(elements)} elements for {chat_id}")
 
-            # Extract links
             logger.info(f"Extracting links from elements for {chat_id}")
             new_links = {
                 f"https://www.zonaprop.com.ar{el.get_attribute('data-to-posting')}"
@@ -474,24 +427,18 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
             logger.info(f"Found {len(new_links)} listings for {chat_id}")
             logger.info(f"Processing listings data for {chat_id}")
             
-            # Update last scan time
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             with user_data_lock:
                 user_data[chat_id]["last_scan"] = timestamp
                 
-                # Get previously seen listings
                 last_seen = set(user_data[chat_id].get("last_seen_links", []))
                 
-                # Identify new listings
                 new_ads = new_links - last_seen
                 
-                # If this is the first run or force_notify is True, don't send notifications
-                # Changed condition from "not last_seen" to "not is_initialized"
                 if not is_initialized and not force_notify:
                     logger.info(f"First run for {chat_id}, saving {len(new_links)} initial listings")
                     
-                    # Send a summary message
                     if len(new_links) == 0:
                         summary_message = (
                             f"Por ahora no encontré publicaciones que se hayan subido hoy. \n"
@@ -513,26 +460,20 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                         text=summary_message
                     )
                     
-                    # Mark as initialized and save links
                     user_data[chat_id]["initialized"] = True
                     user_data[chat_id]["last_seen_links"] = list(new_links)
                     save_users(user_data)
-                    return 1  # Count the summary message
+                    return 1
             
-            # Check if we're shutting down
             if is_shutting_down:
                 logger.info(f"Aborting notification process for {chat_id} due to shutdown")
                 return 0
                 
-            # If we have new ads to notify about
             if new_ads or force_notify:
-                # Notify about new listings or force notification
                 notify_ads = new_ads if not force_notify else new_links
                 logger.info(f"Found {len(notify_ads)} listings to potentially notify about for {chat_id}")
                 
-                # Send either a summary or individual notifications
                 if summary_only:
-                    # Send only a summary message
                     if len(new_links) == 0:
                         summary_message = (
                             f"Por ahora no encontré publicaciones que se hayan subido hoy. \n"
@@ -555,23 +496,18 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                     )
                     logger.info(f"Sent summary message to {chat_id} about {len(notify_ads)} listings")
                     
-                    # Update seen listings
                     with user_data_lock:
                         if not force_notify:
                             user_data[chat_id]["last_seen_links"] = list(last_seen.union(new_ads))
                             save_users(user_data)
-                    
-                    return 1  # Count this as 1 message sent (the summary)
+                    return 1
                 else:
-                    # Send notifications for each listing
                     sent_count = 0
                     for index, ad in enumerate(notify_ads):
-                        # Check if we're shutting down
                         if is_shutting_down:
                             logger.info(f"Stopping notification process for {chat_id} due to shutdown")
                             break
                             
-                        # Add toggle button to the last message
                         keyboard = None
                         if index == len(notify_ads) - 1:
                             keyboard = {
@@ -583,7 +519,6 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                             }
                         
                         try:
-                            # Use direct HTTP API call to send message
                             success = send_telegram_message(
                                 chat_id=chat_id,
                                 text=ad,
@@ -594,14 +529,12 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                             if success:
                                 sent_count += 1
                             
-                            # Sleep briefly between messages to avoid flood limits
                             time.sleep(0.5)
                         except Exception as e:
                             logger.error(f"Error sending message to {chat_id}: {e}")
                     
                     logger.info(f"Sent {sent_count} individual messages to {chat_id}")
                     
-                    # Update seen listings
                     with user_data_lock:
                         if not force_notify:
                             user_data[chat_id]["last_seen_links"] = list(last_seen.union(new_ads))
@@ -611,20 +544,16 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
             else:
                 logger.info(f"No new listings for {chat_id}")
                 
-                # Always save scan time
                 with user_data_lock:
                     save_users(user_data)
 
         except Exception as e:
             logger.error(f"Error during scrape for {chat_id}: {e}", exc_info=True)
         finally:
-            # Comprehensive browser cleanup
             logger.info(f"Cleaning up browser for {chat_id}")
             try:
-                # Close all windows and tabs
                 if 'driver' in locals():
                     try:
-                        # Close all windows
                         for handle in driver.window_handles:
                             driver.switch_to.window(handle)
                             driver.close()
@@ -636,23 +565,18 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
                     except:
                         pass
 
-                # Close driver context
                 driver_context.__exit__(None, None, None)
 
-                # Kill any remaining Chrome processes
                 try:
                     import subprocess
-                    # Kill Chrome processes that might be hanging around
                     subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=5)
                     subprocess.run(['pkill', '-f', 'chromium'], capture_output=True, timeout=5)
                 except:
                     pass
 
-                # Force multiple garbage collections
                 for _ in range(3):
                     gc.collect()
 
-                # Small delay to allow cleanup
                 time.sleep(0.5)
 
                 log_memory_usage("after browser cleanup")
@@ -660,13 +584,11 @@ def single_scrape_run(chat_id, force_notify=False, summary_only=False):
 
             except Exception as cleanup_error:
                 logger.warning(f"Error during browser cleanup for {chat_id}: {cleanup_error}")
-                # Force garbage collection even if cleanup fails
                 for _ in range(3):
                     gc.collect()
 
     except Exception as e:
         logger.error(f"Error during scrape for {chat_id}: {e}", exc_info=True)
-        # Force garbage collection on any error
         gc.collect()
 
     log_memory_usage("end of scrape")
@@ -682,7 +604,6 @@ def handle_message(update):
     
     logger.info(f"Received message from {chat_id}: {text}")
     
-    # Initialize user if not exists
     with user_data_lock:
         if chat_id not in user_data:
             if text == "/start":
@@ -718,7 +639,6 @@ def handle_message(update):
                 send_telegram_message(chat_id=chat_id, text="Usá /start para inicializar el bot ;)")
                 return
     
-    # Check if waiting for URL
     with user_data_lock:
         if user_data[chat_id].get("awaiting_url"):
             user_data[chat_id]["awaiting_url"] = False
@@ -734,9 +654,8 @@ def handle_message(update):
                     disable_web_page_preview=True
                 )
                 
-                # Start scraper if notifications are enabled
                 if user_data[chat_id]["notifications"]:
-                    restart_scraper(chat_id, True)  # True to indicate initialization
+                    restart_scraper(chat_id, True)
             else:
                 send_telegram_message(
                     chat_id=chat_id,
@@ -746,7 +665,6 @@ def handle_message(update):
                 )
             return
     
-    # Handle direct URL submission
     if is_valid_zonaprop_url(text):
         clean_search_url = clean_url(text)
         set_user_url(chat_id, clean_search_url, text)
@@ -757,12 +675,10 @@ def handle_message(update):
             disable_web_page_preview=True
         )
         
-        # Start scraper if notifications are enabled
         if user_data[chat_id]["notifications"]:
-            restart_scraper(chat_id, True)  # True to indicate initialization
+            restart_scraper(chat_id, True)
         return
     
-    # Handle menu options
     if text == "Cambiar link de búsqueda":
         with user_data_lock:
             user_data[chat_id]["awaiting_url"] = True
@@ -778,9 +694,8 @@ def handle_message(update):
             reply_markup=main_menu_keyboard()
         )
         
-        # Start or stop scraper based on notification setting
         if user_data[chat_id]["notifications"] and user_data[chat_id]["url"]:
-            restart_scraper(chat_id, True)  # True to indicate initialization
+            restart_scraper(chat_id, True)
         else:
             stop_scraper(chat_id)
     
@@ -814,11 +729,9 @@ def handle_message(update):
             reply_markup=main_menu_keyboard()
         )
         
-        # Force a single scrape run
-        executor.submit(single_scrape_run, chat_id, True, True)  # Second True means force_summary_only
+        executor.submit(single_scrape_run, chat_id, True, True)
     
     elif text.startswith("/"):
-        # Ignore other commands
         pass
     
     else:
@@ -829,7 +742,7 @@ def handle_message(update):
         )
         send_telegram_message(
             chat_id=chat_id,
-            text="Soy medio boludo igual así que si tenés algún problema avisale a Jan :)",
+            text="No soy muy inteligente igual así que si tenés algún problema avisale a Jan :)",
             reply_markup=main_menu_keyboard()
         )
 
@@ -849,7 +762,6 @@ def handle_callback_query(update):
         target_chat_id = data.split("_")[1]
         toggle_user_notifications(target_chat_id)
         
-        # Answer the callback query
         url = f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery"
         payload = {
             "callback_query_id": query_id,
@@ -857,7 +769,6 @@ def handle_callback_query(update):
         }
         requests.post(url, json=payload)
         
-        # Edit message to remove keyboard
         url = f"https://api.telegram.org/bot{TOKEN}/editMessageReplyMarkup"
         payload = {
             "chat_id": chat_id,
@@ -879,11 +790,11 @@ def get_updates(offset=None, retry_count=3):
     for attempt in range(retry_count):
         try:
             start_time = time.time()
-            response = requests.get(url, params=params, timeout=35)  # Slightly longer than API timeout
+            response = requests.get(url, params=params, timeout=35)
             response_time = time.time() - start_time
 
             if response.status_code == 200:
-                if response_time > 32:  # Long polling should take ~30s
+                if response_time > 32:
                     logger.warning(f"Slow getUpdates response: {response_time:.2f}s")
                 return response.json()
             else:
@@ -901,7 +812,7 @@ def get_updates(offset=None, retry_count=3):
             logger.error(f"Unexpected error getting updates on attempt {attempt + 1}/{retry_count}: {e}")
 
         if attempt < retry_count - 1:
-            wait_time = min(2 ** attempt, 10)  # Max 10s wait
+            wait_time = min(2 ** attempt, 10)
             logger.info(f"Retrying getUpdates in {wait_time}s...")
             time.sleep(wait_time)
 
@@ -914,21 +825,16 @@ def shutdown_handler(signum, frame):
     is_shutting_down = True
     logger.info(f"Received shutdown signal {signum}. Starting graceful shutdown...")
     
-    # Save user data one final time
     save_users(user_data)
     
-    # Mark all scrapers for termination
     for chat_id in list(active_scrapers.keys()):
         stop_scraper(chat_id)
     
-    # Shut down the executor
     executor.shutdown(wait=False)
     logger.info("ThreadPoolExecutor shutdown initiated")
     
-    # Give threads a moment to notice the shutdown signal
     time.sleep(2)
     
-    # Exit with success code
     logger.info("Exiting with success code")
     sys.exit(0)
 
@@ -936,17 +842,14 @@ def main():
     """Main function to start the bot"""
     global is_shutting_down
 
-    # Register signal handlers for graceful shutdown
-    signal.signal(signal.SIGINT, shutdown_handler)   # Ctrl+C
-    signal.signal(signal.SIGTERM, shutdown_handler)  # systemctl stop
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
 
-    # Log initial system state
     logger.info("=" * 60)
     logger.info("Starting ZonaProp Bot")
     logger.info("=" * 60)
     log_memory_usage("startup")
 
-    # Setup X11 authorization for GUI automation
     try:
         import subprocess
         result = subprocess.run(['xhost', '+si:localuser:jan'],
@@ -958,7 +861,6 @@ def main():
     except Exception as e:
         logger.warning(f"Could not configure X11 authorization: {e}")
 
-    # System resource check
     try:
         memory_percent = psutil.virtual_memory().percent
         disk_percent = psutil.disk_usage('/').percent
@@ -974,24 +876,20 @@ def main():
     except Exception as e:
         logger.warning(f"Could not check system resources: {e}")
 
-    # Start scrapers for existing users with notifications enabled
     for chat_id in user_data.keys():
         if user_data[chat_id].get("notifications") and user_data[chat_id].get("url"):
             logger.info(f"Launching scraper thread for {chat_id}")
-            restart_scraper(chat_id, True)  # True for initialization
+            restart_scraper(chat_id, True)
 
-    # Start polling
     logger.info("Bot is running and ready for messages...")
     log_memory_usage("after startup")
 
-    # Resource monitoring variables
     last_memory_check = time.time()
-    memory_check_interval = 120  # Check every 2 minutes
+    memory_check_interval = 120
 
     offset = None
     while not is_shutting_down:
         try:
-            # Periodic resource monitoring
             current_time = time.time()
             if current_time - last_memory_check > memory_check_interval:
                 try:
@@ -1002,57 +900,46 @@ def main():
 
                     logger.info(f"Resource check - System memory: {memory_percent:.1f}%, Process memory: {process_memory_mb:.1f}MB, Threads: {thread_count}")
 
-                    # Alert on high memory usage and trigger reboot if critical
                     if memory_percent > 85:
                         logger.warning(f"High system memory usage: {memory_percent:.1f}% - initiating system reboot")
 
-                        # Trigger graceful shutdown and reboot
                         logger.info("Triggering graceful shutdown due to high memory usage")
 
-                        # Set shutdown flag to stop all operations
                         is_shutting_down = True
 
-                        # Save user data one final time
                         try:
                             save_users(user_data)
                             logger.info("User data saved before reboot")
                         except Exception as e:
                             logger.error(f"Error saving user data before reboot: {e}")
 
-                        # Stop all scrapers
                         for chat_id in list(active_scrapers.keys()):
                             stop_scraper(chat_id)
 
-                        # Shut down the executor
                         executor.shutdown(wait=False)
 
-                        # Wait a moment for cleanup
                         time.sleep(2)
 
-                        # Trigger system reboot
                         logger.critical("Rebooting system due to high memory usage")
                         try:
                             import subprocess
                             subprocess.run(['systemctl', 'reboot'], timeout=10)
                         except Exception as e:
                             logger.error(f"Failed to reboot system: {e}")
-                            # If reboot fails, just exit
                             sys.exit(1)
-                    if process_memory_mb > 500:  # Alert if process uses more than 500MB
+                    if process_memory_mb > 500:
                         logger.warning(f"High process memory usage: {process_memory_mb:.1f}MB")
-                        # Force aggressive cleanup if memory is too high
                         logger.info("Forcing aggressive garbage collection due to high memory usage")
                         for _ in range(5):
                             gc.collect()
 
-                        # Kill any stray browser processes
                         try:
                             import subprocess
                             subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=3)
                             subprocess.run(['pkill', '-f', 'chromium'], capture_output=True, timeout=3)
                         except:
                             pass
-                    if thread_count > 20:  # Alert if too many threads
+                    if thread_count > 20:
                         logger.warning(f"High thread count: {thread_count}")
 
                     last_memory_check = current_time
@@ -1077,7 +964,6 @@ def main():
             else:
                 error_msg = result.get("error", "unknown_error")
                 logger.error(f"Error in getUpdates: {error_msg}")
-                # Longer sleep for persistent errors
                 if error_msg == "max_retries_exceeded":
                     logger.warning("Max retries exceeded, sleeping longer...")
                     time.sleep(30)
@@ -1095,7 +981,6 @@ if __name__ == "__main__":
         logger.info("Bot stopped by KeyboardInterrupt")
         shutdown_handler(signal.SIGINT, None)
     except SystemExit:
-        # This will be triggered by our shutdown handler
         pass
     except Exception as e:
         logger.error(f"Unhandled exception: {e}", exc_info=True)
