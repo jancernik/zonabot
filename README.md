@@ -16,23 +16,32 @@ Message on Telegram: [@ZonaBot](https://t.me/JanZonapropBot)
 
 ## Running locally
 
-1. Install dependencies:
+Create and activate a virtual environment:
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
 
-2. Set your Telegram bot token (from BotFather):
+Install dependencies:
 
-   ```bash
-   export TELEGRAM_TOKEN="your_token_here"
-   ```
+```bash
+pip install -r requirements.txt
+```
 
-3. Run the bot:
+Set your Telegram bot token (from BotFather):
 
-   ```bash
-   python main.py
-   ```
+```bash
+export TELEGRAM_TOKEN="your_token_here"
+```
+
+Run the bot:
+
+```bash
+python main.py
+```
+
+---
 
 >[!NOTE]
 > - This is a hobby project, meant as a tool for for friends and family, not a complete public service.
