@@ -6,13 +6,23 @@ Message on Telegram: [@ZonaBot](https://t.me/JanZonapropBot)
 
 ## How it works
 - You send the bot a Zonaprop search link (with your filters applied).
-- It checks the site every few minutes for new listings.
-- When new results appear, it sends you a message on Telegram.
+- It replies with how many listings the search has today, then checks the site every few minutes.
+- When new listings appear, it sends you each one on Telegram (at most 10 at once, then a link to the rest).
 
 ## Requirements
 
 - A working Chrome/Chromium install.
 - A VM with a functional display (X11) or a real machine. Fully headless environments won't work.
+
+## Configuration
+
+Environment variables (a `.env` file next to `main.py` is loaded automatically):
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `TELEGRAM_TOKEN` | yes | Bot token from BotFather |
+| `ADMIN_CHAT_ID` | no | Chat that gets a message after 6 failed checks in a row, and when checks recover |
+| `ZONABOT_DATA_FILE` | no | Data file path, default `user_data.json` |
 
 ## Running locally
 
@@ -41,9 +51,18 @@ Run the bot:
 python main.py
 ```
 
+A systemd unit for running it as a service is in `deploy/zonaprop-bot.service`.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
 ---
 
 >[!NOTE]
-> - This is a hobby project, meant as a tool for for friends and family, not a complete public service.
+> - This is a hobby project, meant as a tool for friends and family, not a complete public service.
 > - It is currently self-hosted and not designed to be a bulletproof system.
 > - There is no guarantee it won’t break or go down.
