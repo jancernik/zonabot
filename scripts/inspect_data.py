@@ -1,6 +1,6 @@
 """Read-only look at a user_data.json (v1 or v2) as the bot would load it.
 
-    venv/bin/python scripts/inspect_data.py ~/zonaprop-bot/user_data.json
+    venv/bin/python scripts/inspect_data.py ~/zonabot/user_data.json
 
 Loads a temporary copy, since loading can move a corrupt data file aside.
 Chat ids are masked in the output.

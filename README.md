@@ -51,7 +51,7 @@ Run the bot:
 python main.py
 ```
 
-A systemd unit for running it as a service is in `deploy/zonaprop-bot.service`.
+A systemd unit for running it as a service is in `deploy/zonabot.service`.
 
 ## Tests
 
