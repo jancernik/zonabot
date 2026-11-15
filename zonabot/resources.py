@@ -1,4 +1,4 @@
-"""Periodic resource checks: reboot the VM above 85% system memory, kill Chrome processes
+"""Periodic resource checks. Reboots the VM above 85% system memory and kills Chrome processes
 when this process exceeds 500 MB."""
 import gc
 import logging
@@ -29,7 +29,7 @@ def log_startup_resources():
 
 
 def check_resources(request_reboot):
-    """Periodic check. Calls `request_reboot()` when system memory is above the reboot threshold."""
+    """Calls `request_reboot()` when system memory is above the reboot threshold."""
     try:
         process = psutil.Process()
         memory_percent = psutil.virtual_memory().percent

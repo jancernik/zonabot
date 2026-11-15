@@ -38,13 +38,13 @@ def test_matches_the_legacy_extraction_and_drops_suggestions(name):
 
 
 @pytest.mark.parametrize("name", ["user-search-p1", "caba-1dia-p1"])
-def test_b01_listing_urls_are_canonical_without_tracking(name):
+def test_listing_urls_are_canonical_without_tracking(name):
     result, meta = parsed(name)
     assert [l.url for l in result.listings] == [canonical_listing_url(h) for h in meta["legacy_links"]]
     assert all("?" not in l.url and l.url.startswith("https://www.zonaprop.com.ar/propiedades/") for l in result.listings)
 
 
-def test_b06_challenge_page_is_not_mistaken_for_empty_results():
+def test_challenge_page_is_not_mistaken_for_empty_results():
     assert parse_results_page(challenge_page()).kind is PageKind.UNRECOGNIZED
     assert parse_results_page("").kind is PageKind.UNRECOGNIZED
 

@@ -1,4 +1,3 @@
-"""Telegram handler behavior: menu, links, toggles and the inline disable button."""
 import json
 
 from world import CHAT, SEARCH, WATCHED
@@ -126,7 +125,7 @@ def test_non_text_updates_are_ignored(world):
 
 # Inline disable button
 
-def test_b04_disable_button_never_enables(world):
+def test_disable_button_never_enables(world):
     start(world)
     world.send(SEARCH)
     world.press(texts.DISABLE_CALLBACK)
@@ -134,14 +133,14 @@ def test_b04_disable_button_never_enables(world):
     assert world.user().notifications is False and world.scheduler.pending() == []
 
 
-def test_b04_disable_button_answers_and_removes_the_keyboard(world):
+def test_disable_button_answers_and_removes_the_keyboard(world):
     start(world)
     world.press(texts.DISABLE_CALLBACK, message_id=55)
     assert world.telegram.callback_answers == [("q1", texts.DISABLED_CALLBACK_ANSWER)]
     assert world.telegram.markup_edits == [(CHAT, 55, {})]
 
 
-def test_b04_legacy_toggle_buttons_only_disable_their_own_chat(world):
+def test_legacy_toggle_buttons_only_disable_their_own_chat(world):
     start(world, "42")
     start(world, "99")
     world.press("toggle_99", chat_id="42")
@@ -149,7 +148,7 @@ def test_b04_legacy_toggle_buttons_only_disable_their_own_chat(world):
     assert world.user("99").notifications is True
 
 
-def test_b04_disable_bumps_the_generation_only_when_it_changes_something(world):
+def test_disable_bumps_the_generation_only_when_it_changes_something(world):
     start(world)
     world.press(texts.DISABLE_CALLBACK)
     generation = world.user().generation

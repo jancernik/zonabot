@@ -1,4 +1,4 @@
-# Test environment: runtime dependencies without SeleniumBase, which browser.py imports only when loading a page.
+# Runtime dependencies for the tests, without SeleniumBase, which browser.py imports only when loading a page.
 pytest==8.4.2
 pytest-timeout==2.4.0
 beautifulsoup4==4.13.5

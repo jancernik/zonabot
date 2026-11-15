@@ -63,7 +63,6 @@ def _denylisted(host):
 
 
 def _denylist_getaddrinfo(host, *args, **kwargs):
-    """Browser tests may download chromedriver, but never reach Zonaprop or Telegram."""
     if _denylisted(host):
         raise NetworkBlocked(f"browser test tried to resolve {host!r}")
     return _real_getaddrinfo(host, *args, **kwargs)

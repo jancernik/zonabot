@@ -1,4 +1,4 @@
-"""Single-worker job scheduler: one browser job at a time, one regular check chain per chat.
+"""Single-worker job scheduler that runs one browser job at a time and one regular check chain per chat.
 
 `schedule` replaces a chat's chain (older queued entries are dropped when popped).
 Forced checks are one-off jobs that run before regular ones with the same due time.

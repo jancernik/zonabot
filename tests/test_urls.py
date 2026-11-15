@@ -21,7 +21,6 @@ PROD_ORIGINAL = (
         ("departamentos-alquiler-palermo-orden-precio-descendente.html", f"departamentos-alquiler-{FILTERS}-palermo"),
         ("departamentos-alquiler-palermo-publicado-hace-menos-de-1-semana.html", f"departamentos-alquiler-{FILTERS}-palermo"),
         ("departamentos-alquiler-palermo-publicado-hace-menos-de-15-dias.html", f"departamentos-alquiler-{FILTERS}-palermo"),
-        # B9 cases
         ("departamentos-alquiler.html", f"departamentos-alquiler-{FILTERS}"),
         ("departamentos-alquiler-temporal-palermo.html", f"departamentos-alquiler-temporal-{FILTERS}-palermo"),
         ("departamentos-alquiler-palermo-pagina-3.html", f"departamentos-alquiler-{FILTERS}-palermo"),
@@ -34,7 +33,7 @@ def test_normalize_forces_last_day_newest_first(url, expected_slug):
     assert normalize_search_url(B + url) == f"{B}{expected_slug}.html"
 
 
-def test_b09_production_url_normalizes_to_the_url_the_bot_has_been_watching():
+def test_production_url_normalizes_to_the_url_the_bot_has_been_watching():
     watched = json.loads(fixture_text("zonaprop/user-search-p1.json"))["requested_url"]
     assert normalize_search_url(PROD_ORIGINAL) == watched
 
@@ -45,7 +44,7 @@ def test_b09_production_url_normalizes_to_the_url_the_bot_has_been_watching():
     B + "departamentos-alquiler-temporal-palermo-pagina-2.html",
     PROD_ORIGINAL,
 ])
-def test_b09_normalization_is_idempotent(url):
+def test_normalization_is_idempotent(url):
     once = normalize_search_url(url)
     assert normalize_search_url(once) == once
 

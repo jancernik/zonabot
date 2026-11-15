@@ -1,4 +1,4 @@
-"""Zonaprop search URLs: validation, normalization and pagination."""
+"""Validation, normalization and pagination of Zonaprop search URLs."""
 import re
 
 SITE = "https://www.zonaprop.com.ar"
@@ -32,7 +32,7 @@ def _join(slug, query):
 def normalize_search_url(url):
     """Force "published in the last day, newest first" and drop any page number.
 
-    The filters go right after the operation token, the form the bot has used in production;
+    The filters go right after the operation token, the form of the URLs already stored;
     Zonaprop redirects it to its canonical slug order.
     """
     slug, query = _split(url)

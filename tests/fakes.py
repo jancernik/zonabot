@@ -1,4 +1,4 @@
-"""Test doubles for the browser, Telegram and time. No real I/O."""
+"""Test doubles for the browser, Telegram and time."""
 import threading
 from collections import deque
 from dataclasses import dataclass, field
@@ -52,7 +52,7 @@ class FakeBrowser:
         return response
 
     def load(self, url):
-        """zonabot Browser protocol. Plain HTML responses keep the requested URL as the final URL."""
+        """Plain HTML responses keep the requested URL as the final URL."""
         response = self.fetch(url)
         return response if isinstance(response, FetchResult) else FetchResult(url, response)
 

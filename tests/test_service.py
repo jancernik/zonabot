@@ -66,14 +66,14 @@ def test_baseline_summary_uses_the_site_total(world):
     assert world.telegram.texts()[-1] == texts.baseline_summary(577)
 
 
-def test_b06_genuine_empty_baseline_then_first_listing_is_notified(world):
+def test_genuine_empty_baseline_then_first_listing_is_notified(world):
     world.page(1, empty_page(), results_page([1]))
     world.subscribe()
     world.tick()
     assert world.listings_sent() == ids(1)
 
 
-def test_b06_blocked_baseline_retries_with_backoff_and_never_floods(world):
+def test_blocked_baseline_retries_with_backoff_and_never_floods(world):
     world.page(1, challenge_page(), challenge_page(), challenge_page(), challenge_page(), results_page(list(range(1, 31))))
     world.send("/start")
     world.send(SEARCH)
@@ -108,7 +108,7 @@ def test_unchanged_results_send_nothing(world):
     assert world.telegram.sent == []
 
 
-def test_b01_reloading_the_real_page_with_fresh_tracking_ids_sends_nothing(world):
+def test_reloading_the_real_page_with_fresh_tracking_ids_sends_nothing(world):
     world.page(1, lambda url: real_page("user-search-p1"))
     world.subscribe()
     for _ in range(3):
@@ -199,7 +199,7 @@ def test_seen_listings_are_pruned_after_the_retention_period(world):
 
 # Changes while a check is running
 
-def test_b05_disabling_mid_check_sends_nothing_and_keeps_seen(world):
+def test_disabling_mid_check_sends_nothing_and_keeps_seen(world):
     subscribed(world, 1)
 
     def disable_then_load(url):
@@ -211,7 +211,7 @@ def test_b05_disabling_mid_check_sends_nothing_and_keeps_seen(world):
     assert world.listings_sent() == [] and set(world.user().seen) == {"1"}
 
 
-def test_b05_changing_url_mid_check_discards_the_old_results(world):
+def test_changing_url_mid_check_discards_the_old_results(world):
     subscribed(world, 1)
     other = "https://www.zonaprop.com.ar/departamentos-alquiler-belgrano.html"
     world.page(1, results_page([1, 2, 3], total=3), url=normalize_search_url(other))
@@ -244,7 +244,7 @@ def test_disabling_during_delivery_stops_the_remaining_messages(world):
     assert len(world.listings_sent()) == 1
 
 
-def test_b02_overlapping_runs_for_one_chat_never_send_a_listing_twice(world):
+def test_overlapping_runs_for_one_chat_never_send_a_listing_twice(world):
     subscribed(world, 1)
     both_loaded = threading.Barrier(2, timeout=2)
 
@@ -374,8 +374,7 @@ def test_no_admin_messages_without_admin_chat(world):
     assert {m.chat_id for m in world.telegram.sent} == {CHAT}
 
 
-def test_b12_failing_checks_tell_the_user_once_and_again_on_recovery(world):
-    """Overnight outage: the user hears about it once, then once more when checks work again."""
+def test_failing_checks_tell_the_user_once_and_again_on_recovery(world):
     subscribed(world, 1)
     last_scan = world.user().last_scan
     world.page(1, *[TimeoutError("chrome not reachable")] * 8, results_page([2, 1]))
@@ -393,7 +392,7 @@ def test_b12_failing_checks_tell_the_user_once_and_again_on_recovery(world):
     assert world.user().consecutive_failures == 0 and not world.user().failure_notice_sent
 
 
-def test_b12_failure_notice_survives_a_restart(world):
+def test_failure_notice_survives_a_restart(world):
     subscribed(world, 1)
     world.page(1, TimeoutError("down"))
     world.tick()

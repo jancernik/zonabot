@@ -1,4 +1,4 @@
-"""Telegram update handling: menu, search URL submission, notifications toggle, forced checks."""
+"""Handles Telegram updates for the menu, search URL submission, the notifications toggle and forced checks."""
 import logging
 
 from . import texts
@@ -106,7 +106,7 @@ class Bot:
             self.scheduler.cancel(chat_id)
 
     def disable(self, chat_id):
-        """Idempotent; affects only `chat_id`."""
+        """Idempotent."""
         with self.store.lock:
             user = self.store.get(chat_id)
             if user is None:

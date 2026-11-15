@@ -2,7 +2,7 @@
 
     venv/bin/python scripts/inspect_data.py ~/zonaprop-bot/user_data.json
 
-Works on a temporary copy, so the original (and its .bak) are never renamed or rewritten.
+Loads a temporary copy, since loading can move a corrupt data file aside.
 Chat ids are masked in the output.
 """
 import shutil

@@ -32,7 +32,7 @@ def test_jobs_run_when_due_in_order():
     assert [c[0] for c in run.calls] == ["b", "a"]
 
 
-def test_b02_rescheduling_a_chat_replaces_its_chain():
+def test_rescheduling_a_chat_replaces_its_chain():
     s, run, clock = make()
     for generation in (1, 2, 3):
         s.schedule("a", generation)
@@ -99,7 +99,7 @@ def test_chain_replaced_during_a_run_is_not_continued():
     assert [(j.generation, j.due - clock.monotonic()) for j in s.pending()] == [(2, 1000)]
 
 
-def test_b03_forced_check_runs_promptly_while_many_chats_are_subscribed():
+def test_forced_check_runs_promptly_while_many_chats_are_subscribed():
     ran = threading.Event()
 
     def run(chat_id, generation, forced):

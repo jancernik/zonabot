@@ -1,4 +1,4 @@
-"""`world` fixture: the real store, service, scheduler and bot wired to fake browser/Telegram/clock."""
+"""The `world` fixture wires the real store, service, scheduler and bot to a fake browser, Telegram and clock."""
 import random
 from dataclasses import dataclass, replace
 
@@ -43,7 +43,7 @@ class World:
         self.bot.handle_update(callback_update(self._update_id, chat_id, data, message_id))
 
     def subscribe(self, chat_id=CHAT, url=SEARCH):
-        """/start + URL, then run the baseline. Clears recorded messages."""
+        """Sends /start and the URL, runs the baseline and clears recorded messages."""
         self.send("/start", chat_id)
         self.send(url, chat_id)
         self.run_due()

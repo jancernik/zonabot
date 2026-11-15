@@ -1,8 +1,8 @@
-"""One real page load from Zonaprop with the production browser setup. VM only:
+"""One real page load from Zonaprop with the production browser setup, run only on the VM.
 
     ZONABOT_LIVE=1 venv/bin/python -m pytest -m live tests/live
 
-Never talks to Telegram. Detects selector drift and Cloudflare blocking.
+Detects selector drift and Cloudflare blocking.
 """
 import os
 

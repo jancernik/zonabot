@@ -49,7 +49,7 @@ def test_round_trip(tmp_path, clock):
     assert json.loads(store.path.read_text())["schema"] == 2
 
 
-def test_b01_v1_migration_dedupes_tracking_links_by_listing_id(tmp_path, clock):
+def test_v1_migration_dedupes_tracking_links_by_listing_id(tmp_path, clock):
     path = tmp_path / "user_data.json"
     path.write_text(json.dumps({"42": v1_user()}))
     user = Store.load(path, clock=clock).get("42")
@@ -70,7 +70,7 @@ def test_v1_migration_maps_uninitialized_users_to_pending_baseline(tmp_path, clo
 
 
 def test_v1_migration_of_the_production_shape(tmp_path, clock):
-    """Prod had 230 links for 32 listings, each repeated with different tracking params."""
+    """Every listing is stored several times, once per tracking query."""
     links = [tracked(60680000 + i, f"s{j}", pos=i) for j in range(8) for i in range(28)] + [tracked(60690000 + i, "z") for i in range(4)]
     path = tmp_path / "user_data.json"
     path.write_text(json.dumps({"870000000": v1_user(last_seen_links=links[:230])}))
@@ -91,7 +91,7 @@ def test_save_is_atomic_and_keeps_previous_version_as_backup(tmp_path, clock):
     assert not list(tmp_path.glob(".*.tmp"))
 
 
-def test_b10_failed_save_keeps_previous_data(tmp_path, clock, monkeypatch):
+def test_failed_save_keeps_previous_data(tmp_path, clock, monkeypatch):
     store = Store(tmp_path / "user_data.json", clock=clock)
     store.add_user("1")
     store.save()
@@ -108,7 +108,7 @@ def test_b10_failed_save_keeps_previous_data(tmp_path, clock, monkeypatch):
     assert store.path.read_text() == before
 
 
-def test_b10_corrupt_file_recovers_from_backup_and_keeps_the_corrupt_copy(tmp_path, clock):
+def test_corrupt_file_recovers_from_backup_and_keeps_the_corrupt_copy(tmp_path, clock):
     store = Store(tmp_path / "user_data.json", clock=clock)
     store.add_user("1").url = "u"
     store.save()
@@ -122,7 +122,7 @@ def test_b10_corrupt_file_recovers_from_backup_and_keeps_the_corrupt_copy(tmp_pa
     assert len(kept) == 1 and kept[0].read_bytes() == corrupt
 
 
-def test_b10_corrupt_file_without_backup_refuses_every_start(tmp_path, clock):
+def test_corrupt_file_without_backup_refuses_every_start(tmp_path, clock):
     """systemd restarts the bot after a refusal; the restart must not come up empty."""
     path = tmp_path / "user_data.json"
     corrupt = b'{"42": {"url": "https://www.zonaprop.com.ar/x.html", "notif'
@@ -133,7 +133,7 @@ def test_b10_corrupt_file_without_backup_refuses_every_start(tmp_path, clock):
     assert [p.name for p in tmp_path.iterdir()] == ["user_data.json"] and path.read_bytes() == corrupt
 
 
-def test_b10_corrupt_file_with_a_corrupt_backup_refuses_every_start(tmp_path, clock):
+def test_corrupt_file_with_a_corrupt_backup_refuses_every_start(tmp_path, clock):
     path = tmp_path / "user_data.json"
     path.write_bytes(b"{")
     path.with_name("user_data.json.bak").write_bytes(b"{")

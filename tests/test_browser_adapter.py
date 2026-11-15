@@ -1,4 +1,4 @@
-"""SeleniumBaseBrowser against a fake `seleniumbase` module: same calls as production."""
+"""SeleniumBaseBrowser against a fake `seleniumbase` module that records the production calls."""
 import os
 import sys
 import threading
@@ -39,7 +39,7 @@ class FakeSBDriver:
 
 
 class Desktop:
-    """A fake GNOME session: Xwayland auth files in a runtime dir and X sockets in a socket dir."""
+    """A fake GNOME session with Xwayland auth files in a runtime dir and X sockets in a socket dir."""
 
     def __init__(self, root, monkeypatch):
         self.runtime = root / "run-user"
@@ -125,7 +125,7 @@ def test_captcha_errors_are_ignored(fake_sb):
     assert SeleniumBaseBrowser().load("u").html == "<html>ok</html>"
 
 
-def test_b07_concurrent_loads_leave_stdout_alone(fake_sb):
+def test_concurrent_loads_leave_stdout_alone(fake_sb):
     original = sys.stdout
     threads = [threading.Thread(target=SeleniumBaseBrowser().load, args=(f"u{i}",)) for i in range(4)]
     for t in threads:
@@ -172,8 +172,8 @@ def test_configure_display_is_not_ready_without_the_x_socket(desktop):
     assert configure_display() is False
 
 
-def test_b11_display_that_appears_after_startup_is_picked_up(fake_sb, desktop):
-    """Power loss: the service starts a few seconds before Xwayland creates its auth file."""
+def test_display_that_appears_after_startup_is_picked_up(fake_sb, desktop):
+    """After boot the service starts a few seconds before Xwayland creates its auth file."""
     desktop.end_session()
     assert configure_display() is False
     with pytest.raises(DisplayUnavailable):
@@ -185,7 +185,7 @@ def test_b11_display_that_appears_after_startup_is_picked_up(fake_sb, desktop):
     assert os.environ["XAUTHORITY"] == auth
 
 
-def test_b11_new_desktop_session_replaces_a_stale_auth_file(fake_sb, desktop):
+def test_new_desktop_session_replaces_a_stale_auth_file(fake_sb, desktop):
     first = configure_display() and os.environ["XAUTHORITY"]
     desktop.end_session()
     second = desktop.start_session("NEW123")
@@ -199,7 +199,7 @@ def test_headless_loads_do_not_need_a_desktop(fake_sb, desktop):
     assert fake_sb["options"] == [{"uc": True, "headless": True}]
 
 
-def test_b11_wait_for_display_polls_until_the_session_is_up(desktop):
+def test_wait_for_display_polls_until_the_session_is_up(desktop):
     clock = {"now": 0.0}
 
     def sleep(seconds):

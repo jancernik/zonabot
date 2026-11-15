@@ -1,8 +1,7 @@
 """Save real Zonaprop result pages as test fixtures.
 
-Uses the same SeleniumBase setup as the bot (uc mode on the real display, captcha click),
-one fresh browser per page, never touches Telegram or user_data.json. Pages are scrubbed
-before they are written (see scrub_fixtures.py); `--replace OLD=NEW` also rewrites URLs.
+Uses the bot's SeleniumBase setup with one fresh browser per page. Pages are scrubbed with
+scrub_fixtures.py before they are written, and `--replace OLD=NEW` also rewrites URLs.
 
     venv/bin/python scripts/capture_fixtures.py --out /tmp/fixtures URL [URL ...] [--replace OLD=NEW ...]
 """

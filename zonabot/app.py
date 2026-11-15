@@ -1,4 +1,4 @@
-"""Process wiring: Telegram long polling on the main thread, browser jobs on the scheduler thread."""
+"""Telegram long polling runs on the main thread and browser jobs on the scheduler thread."""
 import logging
 import os
 import random
@@ -41,7 +41,7 @@ class App:
         self.reboot_requested = False
 
     def schedule_existing_subscriptions(self):
-        """Resume after a restart without messaging anyone: pending chats re-run their baseline,
+        """Resumes after a restart without messaging anyone. Pending chats re-run their baseline and
         active chats continue with regular checks."""
         with self.store.lock:
             subscriptions = [(c, u.generation) for c, u in self.store.users.items() if u.notifications and u.url]

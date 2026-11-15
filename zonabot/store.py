@@ -64,7 +64,7 @@ class User:
 
 
 def migrate_v1(data, now):
-    """Pre-refactor format: {chat_id: {url, original_url, notifications, last_seen_links, initialized, ...}}."""
+    """Converts schema 1, shaped as {chat_id: {url, original_url, notifications, last_seen_links, initialized, ...}}."""
     users = {}
     for chat_id, old in data.items():
         seen = {}

@@ -1,4 +1,4 @@
-"""Subscription checks: baseline, regular check, forced check, delivery and failure handling.
+"""Baseline, regular and forced checks for subscriptions, with delivery and failure handling.
 
 All browser and Telegram I/O happens outside the store lock. Results are committed only if the
 chat's `generation` is unchanged, so a URL change or disable during a check discards it.
