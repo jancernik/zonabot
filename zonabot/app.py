@@ -3,7 +3,6 @@ import logging
 import os
 import random
 import signal
-import sys
 import threading
 import time
 
@@ -26,7 +25,7 @@ DISPLAY_WAIT = 120
 
 class App:
     def __init__(self, settings, store, telegram, scheduler, bot, clock=time, rng=None,
-                 resource_check=resources.check_resources, reboot=resources.reboot_system, poll_timeout=30):
+                 resource_check=resources.log_resources, poll_timeout=30):
         self.settings = settings
         self.store = store
         self.telegram = telegram
@@ -35,10 +34,8 @@ class App:
         self.clock = clock
         self.rng = rng or random.Random()
         self.resource_check = resource_check
-        self.reboot = reboot
         self.poll_timeout = poll_timeout
         self.stop_event = threading.Event()
-        self.reboot_requested = False
 
     def schedule_existing_subscriptions(self):
         """Resumes after a restart without messaging anyone. Pending chats re-run their baseline and
@@ -76,20 +73,14 @@ class App:
         last_resource_check = self.clock.monotonic()
         while not self.stop_event.is_set():
             if self.clock.monotonic() - last_resource_check > resources.CHECK_INTERVAL:
-                self.resource_check(self._reboot)
+                self.resource_check()
                 last_resource_check = self.clock.monotonic()
             try:
                 self.poll_once()
             except Exception:
                 logger.exception("Error in polling loop")
                 self.stop_event.wait(5)
-        self.shutdown(job_timeout=60 if self.reboot_requested else 120)
-        if self.reboot_requested:
-            try:
-                self.reboot()
-            except Exception as exc:
-                logger.error(f"Failed to reboot system: {exc}")
-                sys.exit(1)
+        self.shutdown()
 
     def shutdown(self, job_timeout=120):
         logger.info("Shutting down: waiting for the running check to finish")
@@ -97,10 +88,6 @@ class App:
             logger.warning("A check is still running; exiting without waiting for it")
         self.store.save()
         logger.info("Shutdown complete")
-
-    def _reboot(self):
-        self.reboot_requested = True
-        self.stop_event.set()
 
 
 def build(settings, store):

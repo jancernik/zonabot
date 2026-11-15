@@ -14,7 +14,7 @@ from zonabot.telegram_api import TelegramError
 
 def make_app(world, **kwargs):
     return App(world.settings, world.store, world.telegram, world.scheduler, world.bot,
-               clock=world.clock, resource_check=kwargs.pop("resource_check", lambda reboot: None), **kwargs)
+               clock=world.clock, resource_check=kwargs.pop("resource_check", lambda: None), **kwargs)
 
 
 def test_restart_schedules_enabled_subscriptions_without_messages(tmp_path):
@@ -94,23 +94,21 @@ def test_run_forever_stops_cleanly_and_saves(world):
     assert world.store.path.exists()
 
 
-def test_high_memory_reboot_shuts_down_once_then_reboots(world):
-    order = []
-
-    def resource_check(request_reboot):
-        request_reboot()
-
-    app = make_app(world, resource_check=resource_check, reboot=lambda: order.append("reboot"))
-    original_shutdown = app.shutdown
-    app.shutdown = lambda job_timeout=120: order.append(("shutdown", job_timeout)) or original_shutdown(job_timeout)
+def test_run_forever_logs_resources_every_interval(world):
+    checks = []
+    app = make_app(world, resource_check=lambda: checks.append(world.clock.monotonic()))
+    polls = []
 
     def get_updates(offset=None, timeout=0):
+        polls.append(1)
         world.clock.advance(200)
+        if len(polls) == 3:
+            app.request_stop()
         return []
 
     world.telegram.get_updates = get_updates
     app.run_forever()
-    assert order == [("shutdown", 60), "reboot"]
+    assert len(checks) == 2
 
 
 def test_build_wires_without_network(tmp_path):

@@ -11,6 +11,8 @@ Restart=always
 RestartSec=5
 # Shutdown waits up to 120 s for a running check, after the current long poll (30 s) returns.
 TimeoutStopSec=180
+# Applies to the bot together with the Chrome it starts.
+MemoryMax=1500M
 
 [Install]
 WantedBy=multi-user.target
