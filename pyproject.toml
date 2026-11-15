@@ -1,0 +1,15 @@
+[project]
+name = "zonabot"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+timeout = 30
+addopts = "-ra --strict-markers -m 'not browser and not live'"
+xfail_strict = true
+markers = [
+    "browser: drives a real local Chrome against local fixture pages (opt-in: -m browser)",
+    "live: hits the real Zonaprop site; requires ZONABOT_LIVE=1 and runs only on the VM (opt-in: -m live)",
+]

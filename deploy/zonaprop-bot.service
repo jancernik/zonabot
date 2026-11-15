@@ -1,0 +1,18 @@
+[Unit]
+Description=Zonaprop Bot Service
+After=network.target
+
+[Service]
+User=jan
+Group=jan
+WorkingDirectory=/home/jan/zonaprop-bot
+ExecStart=/home/jan/zonaprop-bot/venv/bin/python /home/jan/zonaprop-bot/main.py
+Restart=always
+RestartSec=5
+# Shutdown waits up to 120 s for a running check, after the current long poll (30 s) returns.
+TimeoutStopSec=180
+# Applies to the bot together with the Chrome it starts.
+MemoryMax=1500M
+
+[Install]
+WantedBy=multi-user.target
