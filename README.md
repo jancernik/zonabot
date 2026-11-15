@@ -57,8 +57,18 @@ A systemd unit for running it as a service is in `deploy/zonaprop-bot.service`.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest
+python -m pytest                        # offline, against captured pages
+python -m pytest -m browser             # headless Chrome, needs requirements.txt
+ZONABOT_LIVE=1 python -m pytest -m live # one real Zonaprop page, on the bot's machine
 ```
+
+### Capturing fixtures
+
+```bash
+python scripts/capture_fixtures.py --out ~/fixtures-new "https://www.zonaprop.com.ar/..." --replace palermo=barrio-uno
+```
+
+Run it with the bot stopped. Pages are scrubbed before they are written, and `--replace` rewrites text in the URLs.
 
 ---
 
